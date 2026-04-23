@@ -1,0 +1,8 @@
+{
+  "lr": 0.5,
+  "epsilon": 0.05,
+  "speed_min": 0.0,
+  "speed_max": 8.0,
+  "direction_min": -3.141592653589793,
+  "direction_max": 3.141592653589793
+}

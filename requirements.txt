@@ -1,0 +1,8 @@
+# Core dependencies for MG-SPSA simulation
+numpy>=1.21.0
+matplotlib>=3.5.0
+
+# Optional but recommended for better performance
+# numba>=0.56.0  # For JIT compilation and speedup
+# scipy>=1.8.0   # For additional mathematical functions
+# pillow>=8.0.0  # For saving animations

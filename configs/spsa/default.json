@@ -1,0 +1,12 @@
+{
+  "a": 2.0,
+  "c": 0.2,
+  "alpha": 0.602,
+  "gamma": 0.101,
+  "num_perturbations": 2,
+  "decorrelation_exponent": 1.0,
+  "speed_min": 0.0,
+  "speed_max": 8.0,
+  "direction_min": -3.141592653589793,
+  "direction_max": 3.141592653589793
+}

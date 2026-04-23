@@ -1,0 +1,24 @@
+{
+  "duration": 30.0,
+  "dt": 0.05,
+  "update_interval": 1,
+  "plot_interval": 10,
+  "initial_position": [0.0, 0.0],
+  "target_position": [20.0, 15.0],
+  "obstacles": [
+    [5.0, 5.0, 1.5],
+    [10.0, 8.0, 2.0],
+    [15.0, 12.0, 1.8],
+    [8.0, 15.0, 1.5],
+    [18.0, 10.0, 1.2]
+  ],
+  "spsa_config": "configs/spsa/default.json",
+  "gd_config": "configs/gd/default.json",
+  "physics": {
+    "mass": 1.0,
+    "max_thrust": 20.0,
+    "max_speed": 8.0,
+    "inertia_coefficient": 0.85,
+    "response_time": 0.1
+  }
+}
