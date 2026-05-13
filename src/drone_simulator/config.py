@@ -51,8 +51,9 @@ CONFIG = {
         "gamma": 0.25,  # Perturbation decay exponent
 
         # From Lemma 6.1 / Theorem 3.1
-        "num_perturbations": 4,  # N perturbations per iteration (more averaging)
+        "num_perturbations": 8,  # N perturbations per iteration (more averaging)
         "decorrelation_exponent": 1.0,  # Rho for variance decay
+        "gradient_momentum": 0.25,  # EMA momentum for g_phi smoothing
 
         # Exact gradient channel (w block)
         "epsilon_w": 0.01,  # Finite-difference step for exact speed gradient

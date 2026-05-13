@@ -25,7 +25,7 @@ def test_spsa_config_defaults():
     assert config.c == 0.5
     assert config.gamma == 0.25
     assert config.epsilon_w == 0.01
-    assert config.num_perturbations == 4
+    assert config.num_perturbations == 8
     assert config.speed_min == 0.0
     assert config.speed_max == 10.0
 

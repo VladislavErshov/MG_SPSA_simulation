@@ -30,7 +30,7 @@ class SPSAConfig(OptimizerConfig):
     gamma: float = 0.25  # Perturbation exponent for q=1 effective defect
 
     # Mixed-variable specific parameters - from Lemma 6.1 / Theorem 3.1
-    num_perturbations: int = 4  # Number of perturbations per iteration (N)
+    num_perturbations: int = 8  # Number of perturbations per iteration (N)
     decorrelation_exponent: float = 1.0  # Rho value for variance decay
 
     # Exact gradient channel parameters (w block)
@@ -39,6 +39,9 @@ class SPSAConfig(OptimizerConfig):
     # Parameter block sizes - from section 3.1 in mixed_variable_spsa.tex
     speed_params: int = 1  # Number of speed control parameters (w block)
     direction_params: int = 1  # Number of direction control parameters (phi block)
+
+    # Gradient smoothing for phi channel
+    gradient_momentum: float = 0.25  # EMA momentum for g_phi (0 = no smoothing)
 
 
 class MixedVariableSPSA(BaseOptimizer):
@@ -64,6 +67,7 @@ class MixedVariableSPSA(BaseOptimizer):
         self.w_dim = config.speed_params
         self.phi_dim = config.direction_params
         self.param_dim = self.w_dim + self.phi_dim
+        self.g_phi_ema = 0.0
 
     def _compute_step_size(self) -> float:
         """Step size alpha_n = a / (A + n)^alpha (Spall's practical formula)"""
@@ -132,6 +136,12 @@ class MixedVariableSPSA(BaseOptimizer):
 
         g_w = self._compute_exact_gradient_w(self.theta, **loss_kwargs)
         g_phi = self._compute_spsa_gradient_phi(self.theta, beta_n, **loss_kwargs)
+
+        # EMA smoothing for phi gradient to reduce SPSA noise
+        momentum = getattr(self.config, 'gradient_momentum', 0.0)
+        self.g_phi_ema = momentum * self.g_phi_ema + (1 - momentum) * g_phi
+        g_phi = self.g_phi_ema
+
         gradient = np.array([g_w, g_phi])
 
         theta_new = self.theta - alpha_n * gradient
