@@ -42,12 +42,12 @@ CONFIG = {
     # SPSA optimizer parameters (aligned with article theory)
     "spsa_optimizer": {
         # Practical Spall formula: alpha_n = a / (A + n)^alpha
-        "a": 2.0,  # Step size amplitude
+        "a": 1.0,  # Step size amplitude
         "alpha": 0.602,  # Decay exponent (standard SPSA value)
         "A": 50.0,  # Stability constant (prevents freeze in online control)
 
         # Corollary 4.2 balanced gamma for q=1 effective defect: gamma = 1/4
-        "c": 0.5,  # Perturbation amplitude (increased for better obstacle sensing)
+        "c": 0.2,  # Perturbation amplitude
         "gamma": 0.25,  # Perturbation decay exponent
 
         # From Lemma 6.1 / Theorem 3.1

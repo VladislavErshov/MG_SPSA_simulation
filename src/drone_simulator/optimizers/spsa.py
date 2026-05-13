@@ -42,6 +42,7 @@ class SPSAConfig(OptimizerConfig):
 
     # Gradient smoothing for phi channel
     gradient_momentum: float = 0.25  # EMA momentum for g_phi (0 = no smoothing)
+    max_phi_grad: float = 10.0  # Clip |g_phi| to avoid soft-barrier explosion
 
 
 class MixedVariableSPSA(BaseOptimizer):
@@ -141,6 +142,11 @@ class MixedVariableSPSA(BaseOptimizer):
         momentum = getattr(self.config, 'gradient_momentum', 0.0)
         self.g_phi_ema = momentum * self.g_phi_ema + (1 - momentum) * g_phi
         g_phi = self.g_phi_ema
+
+        # Clip phi gradient to prevent soft-barrier explosion
+        max_phi = getattr(self.config, 'max_phi_grad', None)
+        if max_phi is not None:
+            g_phi = np.clip(g_phi, -max_phi, max_phi)
 
         gradient = np.array([g_w, g_phi])
 

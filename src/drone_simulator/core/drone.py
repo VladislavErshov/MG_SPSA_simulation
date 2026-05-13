@@ -66,6 +66,8 @@ class Drone:
         self.direction_history = [0.0]
 
         self.time = 0.0
+        self.consecutive_collisions = 0
+        self.stuck_steps = 0
 
         # Initialize optimizer
         if optimizer_config is not None:
@@ -103,7 +105,7 @@ class Drone:
             self.position, self.target_position, self.obstacles,
             obstacle_weight=50.0, avoidance_strength=2.0,
             speed_smooth_weight=0.2, dir_smooth_weight=0.1,
-            energy_weight=0.1, look_ahead_time=0.2, safety_margin=0.3
+            energy_weight=0.1, look_ahead_time=0.5, safety_margin=0.3
         )
         return self.optimizer.get_speed(), self.optimizer.get_direction()
 
@@ -124,6 +126,23 @@ class Drone:
                 return True
 
         return False
+
+    def _bounce_from_obstacle(self, position: np.ndarray) -> np.ndarray:
+        """Return velocity pointing away from nearest obstacle at current speed."""
+        min_dist = float('inf')
+        away_vec = np.array([1.0, 0.0])
+        for obs in self.obstacles:
+            obs_pos = np.array(obs[:2])
+            diff = position - obs_pos
+            dist = np.linalg.norm(diff)
+            if dist < min_dist:
+                min_dist = dist
+                if dist > 1e-8:
+                    away_vec = diff / dist
+                else:
+                    away_vec = np.array([1.0, 0.0])
+        speed = np.linalg.norm(self.velocity)
+        return away_vec * max(speed, 0.3)
 
     def _apply_physics_step(self):
         """
@@ -166,10 +185,23 @@ class Drone:
         # Step 5: Check collision at next position
         in_collision = self._check_collision(next_position)
 
-        # Step 6: If collision detected, apply penalty: V_{t+1} = 0
-        # But keep the position update - drone attempts to escape next step
+        # Step 6: If collision detected, bounce away from obstacle
         if in_collision:
-            self.velocity = np.array([0.0, 0.0])
+            self.consecutive_collisions += 1
+            self.velocity = self._bounce_from_obstacle(next_position)
+        else:
+            self.consecutive_collisions = 0
+
+        # Detect soft-barrier stuck state: near-zero speed for many steps
+        if speed_cmd < 0.5 and np.linalg.norm(self.velocity) < 0.5:
+            self.stuck_steps += 1
+            if self.stuck_steps > 20:
+                # Random perturbation to escape local minimum
+                self.optimizer.theta[0] = 3.0
+                self.optimizer.theta[1] += float(np.random.choice([-1, 1])) * np.pi / 2
+                self.stuck_steps = 0
+        else:
+            self.stuck_steps = 0
 
         # Step 7: Update position (even in collision - allows escape attempt)
         self.position += self.velocity * self.config.dt
