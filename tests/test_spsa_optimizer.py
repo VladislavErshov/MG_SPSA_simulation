@@ -19,11 +19,14 @@ from src.drone_simulator.optimizers import (
 
 def test_spsa_config_defaults():
     config = SPSAConfig()
-    assert config.a == 1.0
+    assert config.a == 2.0
     assert config.alpha == 0.602
-    assert config.c == 0.1
-    assert config.gamma == 0.101
-    assert config.speed_min == 0.1
+    assert config.A == 50.0
+    assert config.c == 0.5
+    assert config.gamma == 0.25
+    assert config.epsilon_w == 0.01
+    assert config.num_perturbations == 4
+    assert config.speed_min == 0.0
     assert config.speed_max == 10.0
 
 
@@ -80,6 +83,17 @@ def test_target_following_spsa():
     config = SPSAConfig()
     optimizer = TargetFollowingSPSA(config)
     assert optimizer.current_position[0] == pytest.approx(0.0)
+    # Default target is now [0.0, 0.0], changed to match new _dynamic_loss
+    assert optimizer.target_position[1] == pytest.approx(0.0)
+
+
+def test_target_following_init_with_target():
+    """Test initialization and setting target"""
+    config = SPSAConfig()
+    optimizer = TargetFollowingSPSA(config)
+    position = np.array([0.0, 0.0])
+    target = np.array([10.0, 10.0])
+    optimizer.update_state(position, target, [])
     assert optimizer.target_position[1] == pytest.approx(10.0)
 
 
