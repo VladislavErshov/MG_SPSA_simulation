@@ -1,5 +1,6 @@
 """
-Core drone physics and state.
+Core drone physics and state with inertia and collision handling.
+Implements the updated dynamics V_{t+1} = V_t + alpha * (V_cmd - V_t).
 """
 
 from dataclasses import dataclass
@@ -7,126 +8,243 @@ from typing import List, Tuple, Optional, Dict
 
 import numpy as np
 
-from ..optimizers.spsa import SPSAConfig, TargetFollowingSPSA
-from ..optimizers.gradient import GradientDescentConfig, TargetFollowingGD
+from ..optimizers import BaseOptimizer, SPSAConfig, GradientDescentConfig, TargetFollowingSPSA, TargetFollowingGD
 
 
 @dataclass
 class DroneConfig:
     """Configuration for drone physics"""
-    mass: float = 1.0
-    max_thrust: float = 20.0
+    # Inertia coefficient for velocity smoothing - equation at line 10 of technical spec
+    inertia_alpha: float = 0.5  # alpha ∈ (0, 1), larger = more inertia
+
+    # Maximum speed limit
     max_speed: float = 10.0
-    inertia_coefficient: float = 0.9
-    response_time: float = 0.1
+
+    # Maximum acceleration limit for realistic dynamics
+    max_acceleration: float = 5.0
+
+    # Time step
+    dt: float = 0.05
+
+    # Obstacle collision detection
+    collision_detection: bool = True
+
+    # Optimizer type
     optimizer_type: str = "spsa"
 
 
 class Drone:
-    """2D Drone with inertia and optimizer-based control"""
+    """
+    2D Drone with linear inertia smoothing and collision detection.
+
+    Physics implementation:
+    - Velocity update: V_{t+1} = V_t + alpha * (V_cmd - V_t)
+    - Position update: X_{t+1} = X_t + V_{t+1} * dt
+    - Collision: If drone enters obstacle radius R, V_{t+1} = 0 (instant stop)
+
+    The drone attempts to escape obstacles in subsequent steps.
+    """
 
     def __init__(self, position: np.ndarray, config: Optional[DroneConfig] = None,
                  optimizer_config=None):
         self.config = config or DroneConfig()
 
+        # State variables
         self.position = np.array(position).astype(float)
-        self.velocity = np.array([0.0, 0.0])
-        self.acceleration = np.array([0.0, 0.0])
+        self.velocity = np.array([0.0, 0.0])  # V_t - current velocity
+        self.command_velocity = np.array([0.0, 0.0])  # V_cmd - desired velocity from optimizer
 
-        self.target_speed = 0.0
-        self.target_direction = 0.0
-
+        # History for analysis
         self.trajectory = [self.position.copy()]
-        self.speed_history = [0.0]
-        self.direction_history = [0.0]
+        self.velocity_history = [self.velocity.copy()]
+        self.command_velocity_history = [self.command_velocity.copy()]
+        self.in_collision_history = [False]
         self.time_history = [0.0]
 
-        self.time = 0.0
-        self.dt = 0.05
+        # Maintain backward compatibility for speed/direction history
+        self.speed_history = [0.0]
+        self.direction_history = [0.0]
 
+        self.time = 0.0
+
+        # Initialize optimizer
         if optimizer_config is not None:
             self.optimizer = optimizer_config
         elif self.config.optimizer_type.lower() == "gd":
             gd_config = GradientDescentConfig(
-                lr=0.5, epsilon=0.05,
+                lr=0.1, epsilon=0.01, max_grad_norm=5.0,
                 speed_min=0.0, speed_max=self.config.max_speed,
             )
             self.optimizer = TargetFollowingGD(gd_config)
         else:
             spsa_config = SPSAConfig(
-                a=2.0, c=0.2,
+                a=1.0, c=0.2,
                 speed_min=0.0, speed_max=self.config.max_speed,
             )
             self.optimizer = TargetFollowingSPSA(spsa_config)
 
     def set_target(self, target_position: np.ndarray):
+        """Set target position"""
         self.target_position = np.array(target_position).astype(float)
 
     def set_obstacles(self, obstacles: List[Tuple[float, float, float]]):
+        """Set circular obstacles (x, y, radius)"""
         self.obstacles = [list(obs) for obs in obstacles] if obstacles else []
 
     def _compute_desired_control(self) -> Tuple[float, float]:
+        """
+        Compute desired speed and direction from optimizer.
+        This is V_cmd converted to speed/direction representation.
+        """
         self.optimizer.update_state(
             self.position, self.target_position, self.obstacles
         )
         params, loss, gradient = self.optimizer.step_with_state(
             self.position, self.target_position, self.obstacles,
-            obstacle_weight=50.0, avoidance_strength=1.0,
+            obstacle_weight=50.0, avoidance_strength=2.0,
             speed_smooth_weight=0.2, dir_smooth_weight=0.1,
-            energy_weight=0.05
+            energy_weight=0.1, look_ahead_time=0.2, safety_margin=0.3
         )
         return self.optimizer.get_speed(), self.optimizer.get_direction()
 
-    def _apply_control_with_inertia(self, desired_speed: float, desired_direction: float):
-        desired_vx = desired_speed * np.cos(desired_direction)
-        desired_vy = desired_speed * np.sin(desired_direction)
-        desired_velocity = np.array([desired_vx, desired_vy])
+    def _check_collision(self, position: np.ndarray) -> bool:
+        """
+        Check if position is inside any obstacle.
+        Returns True if collision detected.
+        """
+        if not self.config.collision_detection:
+            return False
 
-        inertia = self.config.inertia_coefficient
-        self.velocity = inertia * self.velocity + (1 - inertia) * desired_velocity
+        for obs in self.obstacles:
+            obs_pos = np.array(obs[:2])
+            obs_radius = obs[2] if len(obs) > 2 else 1.0
 
+            dist_to_obstacle = np.linalg.norm(position - obs_pos)
+            if dist_to_obstacle < obs_radius:
+                return True
+
+        return False
+
+    def _apply_physics_step(self):
+        """
+        Apply physics step with inertia and collision handling.
+
+        Equation implementation:
+        1. Update velocity: V_{t+1} = V_t + alpha * (V_cmd - V_t)
+        2. Check collision at new position: X_{t+1} = X_t + V_{t+1} * dt
+        3. If collision: V_{t+1} = 0 (instant stop penalty)
+        4. Update position even during collision (drone attempts to escape)
+        """
+        # Step 1: Compute command velocity from optimizer
+        speed_cmd, direction_cmd = self._compute_desired_control()
+        vx_cmd = speed_cmd * np.cos(direction_cmd)
+        vy_cmd = speed_cmd * np.sin(direction_cmd)
+        self.command_velocity = np.array([vx_cmd, vy_cmd])
+
+        # Step 2: Apply inertia smoothing
+        # V_{t+1} = V_t + alpha * (V_cmd - V_t)
+        alpha = self.config.inertia_alpha
+        self.velocity = self.velocity + alpha * (self.command_velocity - self.velocity)
+
+        # Step 3: Limit maximum speed and acceleration
         speed = np.linalg.norm(self.velocity)
         if speed > self.config.max_speed:
             self.velocity = self.velocity / speed * self.config.max_speed
 
-        self.acceleration = (self.velocity - np.array([
-            self.speed_history[-1] * np.cos(self.direction_history[-1]) if self.speed_history else 0,
-            self.speed_history[-1] * np.sin(self.direction_history[-1]) if self.speed_history else 0,
-        ])) / self.dt
+        # Acceleration limiting (optional, for realism)
+        if len(self.velocity_history) > 0:
+            prev_velocity = self.velocity_history[-1]
+            acceleration = (self.velocity - prev_velocity) / self.config.dt
+            accel_mag = np.linalg.norm(acceleration)
+            if accel_mag > self.config.max_acceleration:
+                acceleration = acceleration / accel_mag * self.config.max_acceleration
+                self.velocity = prev_velocity + acceleration * self.config.dt
 
-        self.target_speed = desired_speed
-        self.target_direction = desired_direction
+        # Step 4: Predict next position
+        next_position = self.position + self.velocity * self.config.dt
 
-    def step(self):
-        desired_speed, desired_direction = self._compute_desired_control()
-        self._apply_control_with_inertia(desired_speed, desired_direction)
-        self.position += self.velocity * self.dt
-        self.time += self.dt
+        # Step 5: Check collision at next position
+        in_collision = self._check_collision(next_position)
 
+        # Step 6: If collision detected, apply penalty: V_{t+1} = 0
+        # But keep the position update - drone attempts to escape next step
+        if in_collision:
+            self.velocity = np.array([0.0, 0.0])
+
+        # Step 7: Update position (even in collision - allows escape attempt)
+        self.position += self.velocity * self.config.dt
+        self.time += self.config.dt
+
+        # Store history
         self.trajectory.append(self.position.copy())
-        self.speed_history.append(np.linalg.norm(self.velocity))
-        self.direction_history.append(np.arctan2(self.velocity[1], self.velocity[0]))
+        self.velocity_history.append(self.velocity.copy())
+        self.command_velocity_history.append(self.command_velocity.copy())
+        self.in_collision_history.append(in_collision)
         self.time_history.append(self.time)
 
-        current_params = np.array([
-            np.linalg.norm(self.velocity),
-            np.arctan2(self.velocity[1], self.velocity[0])
-        ])
-        self.optimizer.history['parameters'].append(current_params)
+        # Update backward compatibility fields
+        current_speed = np.linalg.norm(self.velocity)
+        current_direction = np.arctan2(self.velocity[1], self.velocity[0])
+        self.speed_history.append(current_speed)
+        self.direction_history.append(current_direction)
+
+    def step(self):
+        """Execute one simulation step"""
+        return self._apply_physics_step()
 
     def get_state(self) -> Dict[str, any]:
+        """Get current drone state"""
         return {
             'position': self.position.copy(),
             'velocity': self.velocity.copy(),
+            'command_velocity': self.command_velocity.copy(),
             'speed': np.linalg.norm(self.velocity),
             'direction': np.arctan2(self.velocity[1], self.velocity[0]),
-            'target_speed': self.target_speed,
-            'target_direction': self.target_direction,
+            'command_speed': np.linalg.norm(self.command_velocity),
+            'command_direction': np.arctan2(self.command_velocity[1], self.command_velocity[0]),
             'time': self.time,
+            'in_collision': self.in_collision_history[-1] if self.in_collision_history else False,
         }
 
     def get_trajectory(self) -> np.ndarray:
+        """Get full trajectory as Nx2 array"""
         return np.array(self.trajectory)
 
+    def get_collision_count(self) -> int:
+        """Get total number of collision events"""
+        return sum(self.in_collision_history)
+
+    def get_min_obstacle_distance(self) -> float:
+        """Get minimum distance to any obstacle over entire trajectory"""
+        min_dist = float('inf')
+        trajectory = self.get_trajectory()
+
+        for pos in trajectory:
+            for obs in self.obstacles:
+                obs_pos = np.array(obs[:2])
+                obs_radius = obs[2] if len(obs) > 2 else 1.0
+                dist = np.linalg.norm(pos - obs_pos) - obs_radius
+                min_dist = min(min_dist, dist)
+
+        return min_dist
+
     def reached_target(self, tolerance: float = 1.0) -> bool:
+        """Check if drone reached target"""
         return np.linalg.norm(self.position - self.target_position) < tolerance
+
+    def get_trajectory_length(self) -> float:
+        """Calculate total trajectory length in meters"""
+        trajectory = self.get_trajectory()
+        if len(trajectory) < 2:
+            return 0.0
+        return float(np.sum(np.linalg.norm(np.diff(trajectory, axis=0), axis=1)))
+
+    def get_time_to_target(self, tolerance: float = 1.0) -> Optional[float]:
+        """
+        Get time to reach target if reached, None otherwise
+        """
+        trajectory = self.get_trajectory()
+        for i, pos in enumerate(trajectory):
+            if np.linalg.norm(pos - self.target_position) < tolerance:
+                return self.time_history[i]
+        return None

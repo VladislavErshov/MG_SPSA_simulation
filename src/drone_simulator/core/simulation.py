@@ -17,7 +17,7 @@ from ..visualization.simulation_viz import SimulationVisualizer
 class SimulationConfig:
     """Configuration for simulation"""
     duration: float = 30.0
-    dt: float = 0.05
+    dt: float = 0.05  # This should match physics.dt
     update_interval: int = 1
     plot_interval: int = 5
 
