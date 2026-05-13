@@ -1,6 +1,5 @@
-"""Load simulation and optimizer configurations from JSON files."""
+"""Load simulation and optimizer configurations from JSON files or unified config."""
 
-import json
 from pathlib import Path
 from typing import Any, Dict
 
@@ -13,6 +12,10 @@ from ..optimizers import (
     TargetFollowingGD,
     TargetFollowingSPSA,
 )
+
+# Import unified configuration
+from ..config import CONFIG, PhysicsConfig, SimulationConfig as SimDict
+
 
 
 def load_simulation_config(config_dir: Path = Path("configs")) -> Dict[str, Any]:
@@ -35,35 +38,29 @@ def load_simulation_config(config_dir: Path = Path("configs")) -> Dict[str, Any]
         - 'spsa_optimizer': TargetFollowingSPSA instance
         - 'gd_optimizer': TargetFollowingGD instance
     """
-    sim_path = config_dir / "simulation" / "default.json"
-    with open(sim_path, "r", encoding="utf-8") as f:
-        sim_cfg: Dict[str, Any] = json.load(f)
+    return load_simulation_config_unified()
 
-    # Load optimizer configs referenced inside the simulation config
-    spsa_path = config_dir / "spsa" / "default.json"
-    gd_path = config_dir / "gd" / "default.json"
 
-    with open(spsa_path, "r", encoding="utf-8") as f:
-        spsa_json = json.load(f)
-    with open(gd_path, "r", encoding="utf-8") as f:
-        gd_json = json.load(f)
-
-    spsa_cfg = SPSAConfig(**spsa_json)
-    gd_cfg = GradientDescentConfig(**gd_json)
-
+def load_simulation_config_unified() -> Dict[str, Any]:
+    """
+    Load configuration from unified CONFIG dictionary.
+    This is the new preferred method as per technical specification.
+    """
     return {
         "simulation": SimulationConfig(
-            duration=sim_cfg["duration"],
-            dt=sim_cfg["dt"],
-            update_interval=sim_cfg["update_interval"],
-            plot_interval=sim_cfg["plot_interval"],
+            duration=CONFIG["simulation"]["duration"],
+            dt=CONFIG["physics"]["dt"],  # dt is in physics config
+            update_interval=CONFIG["simulation"]["update_interval"],
+            plot_interval=CONFIG["simulation"]["plot_interval"],
         ),
-        "initial_position": np.array(sim_cfg["initial_position"]),
-        "target_position": np.array(sim_cfg["target_position"]),
-        "obstacles": sim_cfg["obstacles"],
-        "physics": sim_cfg["physics"],
-        "spsa_config": spsa_cfg,
-        "gd_config": gd_cfg,
-        "spsa_optimizer": TargetFollowingSPSA(spsa_cfg),
-        "gd_optimizer": TargetFollowingGD(gd_cfg),
+        "initial_position": np.array(CONFIG["initial_position"]),
+        "target_position": np.array(CONFIG["target_position"]),
+        "obstacles": CONFIG["obstacles"],
+        "physics": CONFIG["physics"],
+        "spsa_config": SPSAConfig(**CONFIG["spsa_optimizer"]),
+        "gd_config": GradientDescentConfig(**CONFIG["gd_optimizer"]),
+        "spsa_optimizer": TargetFollowingSPSA(SPSAConfig(**CONFIG["spsa_optimizer"])),
+        "gd_optimizer": TargetFollowingGD(GradientDescentConfig(**CONFIG["gd_optimizer"])),
+        "metrics": CONFIG["metrics"],
     }
+
