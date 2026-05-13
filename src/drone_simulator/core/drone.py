@@ -127,8 +127,8 @@ class Drone:
 
         return False
 
-    def _bounce_from_obstacle(self, position: np.ndarray) -> np.ndarray:
-        """Return velocity pointing away from nearest obstacle at current speed."""
+    def _bounce_from_obstacle(self, position: np.ndarray, bounce_speed: float) -> np.ndarray:
+        """Return velocity pointing away from nearest obstacle."""
         min_dist = float('inf')
         away_vec = np.array([1.0, 0.0])
         for obs in self.obstacles:
@@ -141,8 +141,7 @@ class Drone:
                     away_vec = diff / dist
                 else:
                     away_vec = np.array([1.0, 0.0])
-        speed = np.linalg.norm(self.velocity)
-        return away_vec * max(speed, 0.3)
+        return away_vec * max(bounce_speed, 0.2)
 
     def _apply_physics_step(self):
         """
@@ -188,17 +187,20 @@ class Drone:
         # Step 6: If collision detected, bounce away from obstacle
         if in_collision:
             self.consecutive_collisions += 1
-            self.velocity = self._bounce_from_obstacle(next_position)
+            bounce_speed = np.linalg.norm(self.velocity) * 0.2
+            if self.consecutive_collisions > 2:
+                bounce_speed = max(bounce_speed, 1.5)
+            self.velocity = self._bounce_from_obstacle(next_position, bounce_speed)
         else:
             self.consecutive_collisions = 0
 
-        # Detect soft-barrier stuck state: near-zero speed for many steps
-        if speed_cmd < 0.5 and np.linalg.norm(self.velocity) < 0.5:
+        # Detect stuck state: low physical speed for many steps
+        if np.linalg.norm(self.velocity) < 0.5:
             self.stuck_steps += 1
-            if self.stuck_steps > 20:
+            if self.stuck_steps > 15:
                 # Random perturbation to escape local minimum
-                self.optimizer.theta[0] = 3.0
-                self.optimizer.theta[1] += float(np.random.choice([-1, 1])) * np.pi / 2
+                self.optimizer.theta[0] = 1.5
+                self.optimizer.theta[1] += float(np.random.choice([-1, 1])) * 0.5
                 self.stuck_steps = 0
         else:
             self.stuck_steps = 0
