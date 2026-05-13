@@ -150,6 +150,12 @@ class TargetFollowingGD(GradientDescent):
         energy_weight = kwargs.get('energy_weight', 0.01)
         loss += energy_weight * speed ** 2
 
+        # 6. Near-target braking (prevent overshoot)
+        dist_to_target_current = np.linalg.norm(self.current_position - self.target_position)
+        if dist_to_target_current < 5.0:
+            braking_weight = (5.0 - dist_to_target_current) * 0.5
+            loss += braking_weight * speed
+
         return loss
 
     def update_state(self, position: np.ndarray, target: np.ndarray, obstacles: List):

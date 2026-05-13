@@ -254,6 +254,12 @@ class TargetFollowingSPSA(MixedVariableSPSA):
         energy_weight = kwargs.get('energy_weight', 0.01)
         loss += energy_weight * speed ** 2
 
+        # 6. Near-target braking (prevent overshoot)
+        dist_to_target_current = np.linalg.norm(self.current_position - self.target_position)
+        if dist_to_target_current < 5.0:
+            braking_weight = (5.0 - dist_to_target_current) * 0.5
+            loss += braking_weight * speed
+
         return loss
 
     def _compute_exact_gradient_w(self, theta: np.ndarray, **loss_kwargs) -> float:
@@ -304,6 +310,11 @@ class TargetFollowingSPSA(MixedVariableSPSA):
         # 4. Energy efficiency
         energy_weight = loss_kwargs.get('energy_weight', 0.05)
         grad += 2.0 * energy_weight * speed
+
+        # 5. Near-target braking
+        dist_to_target_current = np.linalg.norm(self.current_position - self.target_position)
+        if dist_to_target_current < 5.0:
+            grad += (5.0 - dist_to_target_current) * 0.5
 
         return grad
 
