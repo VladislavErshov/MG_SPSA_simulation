@@ -4,10 +4,25 @@ Provides unified interface for Gradient Descent, SPSA, and future MPC implementa
 """
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Tuple, Callable, Optional, List
 
 import numpy as np
+
+
+@dataclass
+class BlockConfig:
+    """Configuration for a single parameter block within a mixed optimizer.
+
+    Attributes:
+        param_slice: slice object selecting this block's indices from theta.
+        method: gradient estimation method — 'exact', 'spsa_off_center', or 'spsa_centered'.
+        q: defect order for SPSA blocks (1 for off-center, 2+ for centered stencil).
+             Ignored for 'exact' method.
+    """
+    param_slice: slice
+    method: str  # 'exact', 'spsa_off_center', 'spsa_centered'
+    q: int = 1
 
 
 @dataclass

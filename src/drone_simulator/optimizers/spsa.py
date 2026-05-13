@@ -1,154 +1,210 @@
 """
-Mixed-Variable SPSA Optimizer for Drone Trajectory Optimization
-Based on "Mixed-Gradient SPSA: Theory and Reinforcement-Learning Applications"
+Mixed-Variable Optimizer aligned with article theory.
 
-References to Overleaf project for theoretical foundations.
+Implements the modular mixed-gradient framework from
+"Mixed-Gradient SPSA: Theory and Reinforcement-Learning Applications".
+
+Each parameter block can use its own gradient estimator:
+- exact      : conditionally unbiased gradient (e.g. analytical or central FD)
+- spsa_off_center : one-measurement SPSA, effective defect order q=1
+- spsa_centered   : centered stencil SPSA, defect order q>=2
+
+Gain sequences follow the article exactly:
+    alpha_n = a / n                         (step size)
+    beta_n  = c / n^{gamma}                 (perturbation size)
+where gamma is chosen from the defect order q:
+    off-center (q=1) : gamma = 1/4
+    centered (q>=2)  : gamma = 1 / (2*(q+1))
 """
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Tuple, Callable, Optional, List
 
 import numpy as np
 
-from .base import BaseOptimizer, OptimizerConfig
+from .base import BaseOptimizer, OptimizerConfig, BlockConfig
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
 @dataclass
-class SPSAConfig(OptimizerConfig):
-    """Configuration for Mixed-Variable SPSA optimizer"""
-    # Step size parameters - practical Spall formula: a / (A + n)^alpha
-    a: float = 2.0  # Step size amplitude
-    alpha: float = 0.602  # Decay exponent (standard SPSA value)
-    A: float = 50.0  # Stability constant (prevents freeze in online control)
+class MixedOptimizerConfig(OptimizerConfig):
+    """Configuration for the modular Mixed Optimizer.
 
-    # Perturbation size parameters - from Corollary 4.2 (q=1 balanced gamma=1/4)
-    c: float = 0.5  # Perturbation amplitude (increased for better obstacle sensing)
-    gamma: float = 0.25  # Perturbation exponent for q=1 effective defect
-
-    # Mixed-variable specific parameters - from Lemma 6.1 / Theorem 3.1
-    num_perturbations: int = 8  # Number of perturbations per iteration (N)
-    decorrelation_exponent: float = 1.0  # Rho value for variance decay
-
-    # Exact gradient channel parameters (w block)
-    epsilon_w: float = 0.01  # Finite-difference step for exact gradient on speed
-
-    # Parameter block sizes - from section 3.1 in mixed_variable_spsa.tex
-    speed_params: int = 1  # Number of speed control parameters (w block)
-    direction_params: int = 1  # Number of direction control parameters (phi block)
-
-    # Gradient smoothing for phi channel
-    gradient_momentum: float = 0.25  # EMA momentum for g_phi (0 = no smoothing)
-    max_phi_grad: float = 10.0  # Clip |g_phi| to avoid soft-barrier explosion
-
-
-class MixedVariableSPSA(BaseOptimizer):
+    Step size: alpha_n = a / n  (article theory, alpha=1.0)
+    Perturbation: beta_n = c / n^{gamma}  (gamma auto-derived from block q)
     """
-    Mixed-Variable SPSA Optimizer for Drone Control
+    a: float = 1.0               # Step-size amplitude
+    c: float = 0.2               # Perturbation amplitude
+    burn_in: int = 0             # Offset n by burn_in: alpha_n = a/(n+burn_in)
+                                 # burn_in=0 gives pure a/n (article theory);
+                                 # burn_in>0 stabilises early online-control steps.
+    num_perturbations: int = 8   # N probes per SPSA block (Lemma 6.1)
+    decorrelation_exponent: float = 1.0  # Rho in N^{-rho} variance decay
 
-    Implements the mixed-parameter update from the article:
-    - w channel (speed): exact gradient via finite differences
-    - phi channel (direction): one-measurement SPSA probing
+    # Exact gradient channel (central FD fallback when no analytic grad is supplied)
+    epsilon_exact: float = 0.01
 
-    Update rule (theta = [w, phi]):
-        g_n = [g_n^{(w)}, g_n^{(phi)}]
-        theta_n = theta_{n-1} - alpha_n * g_n
+    # Optional EMA smoothing and clipping for SPSA blocks
+    gradient_momentum: float = 0.0   # 0 = no EMA (article does not require it)
+    max_grad_norm: float = None      # Per-block gradient clipping
 
-    where:
-        g_n^{(w)}  = exact gradient of L w.r.t. w  (central FD)
-        g_n^{(phi)} = (1/(N*beta_n)) * sum_j Delta_j * (L(w, phi+beta_n*Delta_j) - L(w, phi))
-    """
 
-    def __init__(self, config: SPSAConfig, loss_function: Callable):
+class MixedOptimizer(BaseOptimizer):
+    """Modular mixed optimizer: each block chooses its own gradient estimator."""
+
+    def __init__(self, config: MixedOptimizerConfig, loss_function: Callable,
+                 blocks: Optional[List[BlockConfig]] = None):
         super().__init__(config, loss_function)
         self.config = config
-        self.w_dim = config.speed_params
-        self.phi_dim = config.direction_params
-        self.param_dim = self.w_dim + self.phi_dim
-        self.g_phi_ema = 0.0
+        self.blocks = blocks or []
+        self.param_dim = sum(
+            (sl.stop or self.param_dim) - (sl.start or 0)
+            for sl, _, _ in self._iter_blocks()
+        )
+        # EMA state per SPSA block
+        self._ema = {}
 
+    def _iter_blocks(self):
+        """Yield (slice, method, q) for every configured block."""
+        for b in self.blocks:
+            yield b.param_slice, b.method, b.q
+
+    # ------------------------------------------------------------------
+    # Gain sequences — exactly as in the article
+    # ------------------------------------------------------------------
     def _compute_step_size(self) -> float:
-        """Step size alpha_n = a / (A + n)^alpha (Spall's practical formula)"""
-        n = self.iteration + 1
-        return self.config.a / ((self.config.A + n) ** self.config.alpha)
+        """alpha_n = a / (n + burn_in).
 
-    def _compute_perturbation_size(self) -> float:
-        """Perturbation size beta_n = c / n^gamma"""
-        n = self.iteration + 1
-        return self.config.c / (n ** self.config.gamma)
-
-    def _generate_perturbation(self) -> float:
-        """Generate scalar Rademacher perturbation for phi channel"""
-        return float(np.random.choice([-1, 1]))
-
-    def _compute_exact_gradient_w(self, theta: np.ndarray, **loss_kwargs) -> float:
+        burn_in=0 recovers the article's pure a/n (Theorem 3.1 / Corollary 4.2).
+        burn_in>0 is a practical stabiliser for online control; it does not
+        change the asymptotic rate because n+burn_in ~ n as n -> infinity.
         """
-        Exact gradient for w (speed) via central finite differences.
-        This is the 'exact gradient channel' g_n^{(w)} from the article.
-        """
-        eps = self.config.epsilon_w
-        theta_plus = theta.copy()
-        theta_minus = theta.copy()
-        theta_plus[0] += eps
-        theta_minus[0] -= eps
-        theta_plus = self._clip_parameters(theta_plus)
-        theta_minus = self._clip_parameters(theta_minus)
-        return (self.loss_function(theta_plus, **loss_kwargs) -
-                self.loss_function(theta_minus, **loss_kwargs)) / (2.0 * eps)
+        n = max(self.iteration, 1) + self.config.burn_in
+        return self.config.a / n
 
-    def _compute_spsa_gradient_phi(self, theta: np.ndarray, beta_n: float, **loss_kwargs) -> float:
+    @staticmethod
+    def _gamma_from_q(method: str, q: int) -> float:
+        """Balanced gamma derived from defect order q.
+
+        Off-center (one-measurement) probing has effective q=1 regardless of
+        stencil, because the probe-center bias induces a first-order defect.
+        Centered stencils eliminate that bias, so the defect order equals the
+        stencil order q.
+
+        Balancing condition: 1 - 2*gamma = 2*q*gamma  =>  gamma = 1/(2*(q+1))
+        For q=1 off-center: gamma = 1/4.
         """
-        One-measurement SPSA gradient for phi (direction).
+        if method == "spsa_off_center":
+            return 0.25
+        if method == "spsa_centered":
+            return 1.0 / (2.0 * (q + 1))
+        return 0.0
+
+    def _compute_perturbation_size(self, gamma: float) -> float:
+        """beta_n = c / (n + burn_in)^{gamma}"""
+        n = max(self.iteration, 1) + self.config.burn_in
+        return self.config.c / (n ** gamma)
+
+    # ------------------------------------------------------------------
+    # Gradient estimators per block
+    # ------------------------------------------------------------------
+    def _generate_rademacher(self, size: int = 1) -> np.ndarray:
+        return np.random.choice([-1.0, 1.0], size=size)
+
+    def _compute_exact_gradient(self, theta: np.ndarray, block_slice: slice,
+                                analytic_fn: Optional[Callable] = None,
+                                **loss_kwargs) -> np.ndarray:
+        """Exact gradient for a block.
+
+        If ``analytic_fn`` is supplied it is called directly;
+        otherwise a central finite-difference approximation is used.
+        """
+        if analytic_fn is not None:
+            return analytic_fn(theta, **loss_kwargs)
+
+        eps = self.config.epsilon_exact
+        dim = theta[block_slice].shape[0]
+        grad = np.zeros(dim)
+        idx_start = block_slice.start or 0
+        for i in range(dim):
+            theta_plus = theta.copy()
+            theta_minus = theta.copy()
+            theta_plus[idx_start + i] += eps
+            theta_minus[idx_start + i] -= eps
+            theta_plus = self._clip_parameters(theta_plus)
+            theta_minus = self._clip_parameters(theta_minus)
+            grad[i] = (self.loss_function(theta_plus, **loss_kwargs) -
+                       self.loss_function(theta_minus, **loss_kwargs)) / (2.0 * eps)
+        return grad
+
+    def _compute_spsa_gradient(self, theta: np.ndarray, block_slice: slice,
+                               beta_n: float, q: int, **loss_kwargs) -> np.ndarray:
+        """One-measurement SPSA gradient for a block.
+
         Implements g_n^{(phi)} = (1/(N*beta_n)) * sum_j Delta_j * Y_j
-        where Y_j = L(w, phi + beta_n*Delta_j) - L(w, phi) is the probing increment.
-
-        Using the increment (instead of raw loss) removes the O(beta_n^{-1})
-        variance blow-up, matching the article's structure where Y_j is an
-        observation increment (e.g. lambda*beta*<Delta, Psi> in linear curiosity).
+        with the increment Y_j = L(theta_pert) - L(theta) to avoid the
+        O(beta_n^{-1}) variance blow-up (article Section 5.2, linear curiosity).
         """
         n_perturb = self.config.num_perturbations
-        phi = theta[1]
+        dim = theta[block_slice].shape[0]
         loss_baseline = self.loss_function(theta, **loss_kwargs)
-        s = 0.0
+        grad = np.zeros(dim)
+
         for _ in range(n_perturb):
-            delta = self._generate_perturbation()
+            delta = self._generate_rademacher(size=dim)
             theta_pert = theta.copy()
-            theta_pert[1] = phi + beta_n * delta
+            theta_pert[block_slice] = theta[block_slice] + beta_n * delta
             theta_pert = self._clip_parameters(theta_pert)
             y = self.loss_function(theta_pert, **loss_kwargs) - loss_baseline
-            s += delta * y
-        return s / (n_perturb * beta_n)
+            grad += delta * y
 
+        return grad / (n_perturb * beta_n)
+
+    # ------------------------------------------------------------------
+    # Step
+    # ------------------------------------------------------------------
     def step(self, **loss_kwargs) -> Tuple[np.ndarray, float, np.ndarray]:
-        """
-        Execute one mixed-variable SPSA step.
+        """Execute one mixed optimization step.
 
         Returns:
-            - Updated parameters [speed, direction]
-            - Loss at new parameters
-            - Full gradient estimate [g_w, g_phi]
+            theta, loss, gradient (full vector)
         """
         self.iteration += 1
         alpha_n = self._compute_step_size()
-        beta_n = self._compute_perturbation_size()
 
-        g_w = self._compute_exact_gradient_w(self.theta, **loss_kwargs)
-        g_phi = self._compute_spsa_gradient_phi(self.theta, beta_n, **loss_kwargs)
+        gradient = np.zeros_like(self.theta)
 
-        # EMA smoothing for phi gradient to reduce SPSA noise
-        momentum = getattr(self.config, 'gradient_momentum', 0.0)
-        self.g_phi_ema = momentum * self.g_phi_ema + (1 - momentum) * g_phi
-        g_phi = self.g_phi_ema
+        for block_slice, method, q in self._iter_blocks():
+            if method == "exact":
+                grad = self._compute_exact_gradient(
+                    self.theta, block_slice, **loss_kwargs)
+            elif method in ("spsa_off_center", "spsa_centered"):
+                gamma = self._gamma_from_q(method, q)
+                beta_n = self._compute_perturbation_size(gamma)
+                grad = self._compute_spsa_gradient(
+                    self.theta, block_slice, beta_n, q, **loss_kwargs)
 
-        # Clip phi gradient to prevent soft-barrier explosion
-        max_phi = getattr(self.config, 'max_phi_grad', None)
-        if max_phi is not None:
-            g_phi = np.clip(g_phi, -max_phi, max_phi)
+                # Optional EMA smoothing (not required by theory, but
+                # useful for high-variance online control)
+                if self.config.gradient_momentum > 0.0:
+                    key = (block_slice.start, block_slice.stop)
+                    prev = self._ema.get(key, 0.0)
+                    m = self.config.gradient_momentum
+                    grad = m * prev + (1.0 - m) * grad
+                    self._ema[key] = grad.copy()
 
-        gradient = np.array([g_w, g_phi])
+                # Optional clipping
+                if self.config.max_grad_norm is not None:
+                    norm = np.linalg.norm(grad)
+                    if norm > self.config.max_grad_norm:
+                        grad = grad * (self.config.max_grad_norm / norm)
+            else:
+                raise ValueError(f"Unknown block method: {method}")
+
+            gradient[block_slice] = grad
 
         theta_new = self.theta - alpha_n * gradient
         theta_new = self._rate_limit_direction(theta_new)
@@ -163,41 +219,29 @@ class MixedVariableSPSA(BaseOptimizer):
         return self.theta.copy(), loss, gradient.copy()
 
 
-class TargetFollowingSPSA(MixedVariableSPSA):
-    """
-    Specialized SPSA for target following with dynamic loss function
+# ===================================================================
+# Drone-specific specialization
+# ===================================================================
 
-    This implements the application-specific loss function described in:
-    - section 5.2 (Drone Control Application) in applications.tex
-    - implements L(theta) = L_target + L_obstacle + L_smooth + L_energy from the paper
-    """
+class TargetFollowingSPSA(MixedOptimizer):
+    """Drone optimizer: speed by exact gradient, direction by one-measurement SPSA."""
 
-    def __init__(self, config: SPSAConfig):
-        # Initialize with placeholder loss function
-        super().__init__(config, self._dynamic_loss)
+    def __init__(self, config: MixedOptimizerConfig):
+        blocks = [
+            BlockConfig(slice(0, 1), method="exact", q=0),
+            BlockConfig(slice(1, 2), method="spsa_off_center", q=1),
+        ]
+        super().__init__(config, self._dynamic_loss, blocks=blocks)
 
-        # Target following state (updated each step)
         self.current_position = np.array([0.0, 0.0])
         self.target_position = np.array([0.0, 0.0])
         self.obstacles = []
 
     def _dynamic_loss(self, params: np.ndarray, **kwargs) -> float:
-        """
-        Dynamic loss function for target following
-        Implements the cost function from section 5.2 of applications.tex:
-
-        L(theta) = w1 * L_target + w2 * L_obstacle + w3 * L_smooth + w4 * L_energy
-
-        where:
-        - L_target = distance to target (equation 5.3)
-        - L_obstacle = barrier function for obstacle avoidance (equation 5.4)
-        - L_smooth = penalty for control input changes (equation 5.5)
-        - L_energy = penalty for high speeds (equation 5.6)
-        """
+        """Dynamic loss from article Section 5.2 (Drone Control)."""
         speed = params[0]
         direction = params[1]
 
-        # Predict position with look-ahead horizon
         look_ahead_time = kwargs.get('look_ahead_time', 0.5)
         dx = speed * np.cos(direction) * look_ahead_time
         dy = speed * np.sin(direction) * look_ahead_time
@@ -205,15 +249,14 @@ class TargetFollowingSPSA(MixedVariableSPSA):
 
         loss = 0.0
 
-        # 1. Distance to target (primary objective) - quadratic for stronger attraction
+        # 1. Distance to target (quadratic)
         dist_to_target = np.linalg.norm(next_position - self.target_position)
         loss += dist_to_target ** 2
 
-        # 2. Obstacle avoidance (barrier function with safety margin)
+        # 2. Obstacle avoidance (barrier)
         obstacle_weight = kwargs.get('obstacle_weight', 100.0)
         avoidance_strength = kwargs.get('avoidance_strength', 10.0)
         safety_margin = kwargs.get('safety_margin', 1.0)
-        min_obstacle_dist = float('inf')
 
         for obs in self.obstacles:
             obs_pos = np.array(obs[:2])
@@ -222,26 +265,19 @@ class TargetFollowingSPSA(MixedVariableSPSA):
 
             dist_to_obstacle = np.linalg.norm(next_position - obs_pos)
             if dist_to_obstacle < effective_radius:
-                # Collision penalty - quadratic barrier term
                 loss += obstacle_weight * (effective_radius - dist_to_obstacle) ** 2
             else:
-                # Soft barrier - inverse distance term
                 loss += avoidance_strength / (dist_to_obstacle - effective_radius + 1e-6)
 
-            min_obstacle_dist = min(min_obstacle_dist, dist_to_obstacle - obs_radius)
-
-        # 3. Speed smoothness (penalize rapid speed changes)
-        # From equation (5.5a) in applications.tex
+        # 3. Speed smoothness
         if len(self.history['parameters']) > 0:
             prev_speed = self.history['parameters'][-1][0]
             speed_smooth_weight = kwargs.get('speed_smooth_weight', 0.1)
             loss += speed_smooth_weight * (speed - prev_speed) ** 2
 
-        # 4. Direction smoothness (penalize sharp turns)
-        # From equation (5.5b) in applications.tex
+        # 4. Direction smoothness
         if len(self.history['parameters']) > 0:
             prev_direction = self.history['parameters'][-1][1]
-            # Handle angle wrapping using arctan2
             direction_diff = np.arctan2(
                 np.sin(direction - prev_direction),
                 np.cos(direction - prev_direction)
@@ -249,12 +285,11 @@ class TargetFollowingSPSA(MixedVariableSPSA):
             dir_smooth_weight = kwargs.get('dir_smooth_weight', 0.1)
             loss += dir_smooth_weight * direction_diff ** 2
 
-        # 5. Energy efficiency (penalize high speeds)
-        # From equation (5.6) in applications.tex
+        # 5. Energy efficiency
         energy_weight = kwargs.get('energy_weight', 0.01)
         loss += energy_weight * speed ** 2
 
-        # 6. Near-target braking (prevent overshoot)
+        # 6. Near-target braking (prevents overshoot)
         dist_to_target_current = np.linalg.norm(self.current_position - self.target_position)
         if dist_to_target_current < 5.0:
             braking_weight = (5.0 - dist_to_target_current) * 0.5
@@ -262,21 +297,26 @@ class TargetFollowingSPSA(MixedVariableSPSA):
 
         return loss
 
-    def _compute_exact_gradient_w(self, theta: np.ndarray, **loss_kwargs) -> float:
-        """
-        Analytical exact gradient for w (speed).
-        Replaces finite-difference with closed-form derivative of _dynamic_loss.
-        """
+    def _compute_exact_gradient(self, theta: np.ndarray, block_slice: slice,
+                                analytic_fn: Optional[Callable] = None,
+                                **loss_kwargs) -> np.ndarray:
+        """Override exact gradient to use analytical form for the speed block."""
+        if block_slice == slice(0, 1):
+            return np.array([self._analytical_gradient_speed(theta, **loss_kwargs)])
+        return super()._compute_exact_gradient(theta, block_slice, analytic_fn, **loss_kwargs)
+
+    def _analytical_gradient_speed(self, theta: np.ndarray, **loss_kwargs) -> float:
+        """Analytical partial derivative dL/d(speed)."""
         speed = theta[0]
         direction = theta[1]
-        look_ahead_time = loss_kwargs.get('look_ahead_time', 0.2)
+        look_ahead_time = loss_kwargs.get('look_ahead_time', 0.5)
 
         dir_vec = np.array([np.cos(direction), np.sin(direction)])
         next_position = self.current_position + speed * dir_vec * look_ahead_time
 
         grad = 0.0
 
-        # 1. Distance to target (quadratic: dist^2)
+        # 1. Distance to target
         diff = next_position - self.target_position
         grad += 2.0 * look_ahead_time * np.dot(diff, dir_vec)
 
@@ -319,44 +359,38 @@ class TargetFollowingSPSA(MixedVariableSPSA):
         return grad
 
     def update_state(self, position: np.ndarray, target: np.ndarray, obstacles: List):
-        """Update state for loss calculation"""
         self.current_position = position.copy()
         self.target_position = target.copy()
         self.obstacles = obstacles.copy()
 
     def step_with_state(self, position: np.ndarray, target: np.ndarray,
-                       obstacles: List, **loss_kwargs) -> Tuple[np.ndarray, float, np.ndarray]:
-        """Execute step with updated state"""
+                        obstacles: List, **loss_kwargs) -> Tuple[np.ndarray, float, np.ndarray]:
         self.update_state(position, target, obstacles)
         return self.step(**loss_kwargs)
 
 
 def create_test_scenario() -> tuple:
-    """Create a test scenario with obstacles for standalone testing"""
     start_pos = np.array([0.0, 0.0])
     target_pos = np.array([20.0, 15.0])
-
     obstacles = [
         [5.0, 5.0, 2.0],
         [10.0, 8.0, 1.5],
         [15.0, 12.0, 2.5],
         [8.0, 15.0, 2.0],
-        [18.0, 10.0, 1.8]
+        [18.0, 10.0, 1.8],
     ]
-
     return start_pos, target_pos, obstacles
 
 
 if __name__ == "__main__":
-    # Standalone test
-    config = SPSAConfig()
+    config = MixedOptimizerConfig()
     scenario = create_test_scenario()
 
     optimizer = TargetFollowingSPSA(config)
     optimizer.update_state(scenario[0], scenario[1], scenario[2])
 
-    print("Testing SPSA Optimizer:")
-    print(f"Initial parameters: speed={optimizer.get_speed():.2f}, direction={optimizer.get_direction():.2f}")
+    print("Testing Mixed Optimizer:")
+    print(f"Initial: speed={optimizer.get_speed():.2f}, dir={optimizer.get_direction():.2f}")
 
     for i in range(10):
         params, loss, gradient = optimizer.step_with_state(

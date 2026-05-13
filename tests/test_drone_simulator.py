@@ -168,17 +168,16 @@ def test_drone_metrics():
     assert drone.get_trajectory_length() == pytest.approx(1.0 + np.sqrt(2), rel=0.01)
 
 
-def test_drone_with_gd_optimizer():
-    config = DroneConfig(optimizer_type="gd")
+def test_drone_with_mixed_optimizer():
+    from src.drone_simulator.optimizers import TargetFollowingSPSA
+    config = DroneConfig(optimizer_type="spsa")
     drone = Drone(np.array([0.0, 0.0]), config)
-    assert drone.config.optimizer_type == "gd"
-    # Check that the optimizer is indeed GD
-    from src.drone_simulator.optimizers import TargetFollowingGD
-    assert isinstance(drone.optimizer, TargetFollowingGD)
+    assert drone.config.optimizer_type == "spsa"
+    assert isinstance(drone.optimizer, TargetFollowingSPSA)
 
 
-def test_drone_gd_step():
-    config = DroneConfig(optimizer_type="gd")
+def test_drone_mixed_step():
+    config = DroneConfig(optimizer_type="spsa")
     drone = Drone(np.array([0.0, 0.0]), config)
     drone.set_target(np.array([10.0, 10.0]))
     drone.set_obstacles([])
@@ -188,8 +187,8 @@ def test_drone_gd_step():
     assert drone.time > 0
 
 
-def test_simulator_run_with_gd():
-    config = DroneConfig(optimizer_type="gd")
+def test_simulator_run_with_mixed():
+    config = DroneConfig(optimizer_type="spsa")
     drone = Drone(np.array([0.0, 0.0]), config)
     drone.set_target(np.array([5.0, 5.0]))
     drone.set_obstacles([])

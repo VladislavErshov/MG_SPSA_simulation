@@ -2,7 +2,7 @@
 Mixed-Variable SPSA Drone Simulator
 
 A 2D drone simulator with inertia and trajectory optimization using
-the Mixed-Variable Simultaneous Perturbation Stochastic Approximation (SPSA) algorithm.
+the Mixed-Gradient SPSA framework from the article.
 """
 
 from .core import (
@@ -12,8 +12,9 @@ from .core import (
     SimulationConfig,
 )
 from .optimizers import (
-    MixedVariableSPSA,
-    SPSAConfig,
+    MixedOptimizer,
+    MixedOptimizerConfig,
+    BlockConfig,
     TargetFollowingSPSA,
     create_test_scenario,
     GradientDescent,
@@ -26,8 +27,9 @@ __all__ = [
     "DroneConfig",
     "DroneSimulator",
     "SimulationConfig",
-    "MixedVariableSPSA",
-    "SPSAConfig",
+    "MixedOptimizer",
+    "MixedOptimizerConfig",
+    "BlockConfig",
     "TargetFollowingSPSA",
     "create_test_scenario",
     "GradientDescent",

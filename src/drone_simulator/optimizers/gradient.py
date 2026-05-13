@@ -1,6 +1,9 @@
 """
 Ordinary Gradient Descent Optimizer for Drone Trajectory Optimization
 Used for comparison with SPSA.
+
+TODO: Comparison with GD is temporarily on hold. Re-enable when multi-method
+comparison framework is implemented (see MixedOptimizer blocks architecture).
 """
 
 from dataclasses import dataclass

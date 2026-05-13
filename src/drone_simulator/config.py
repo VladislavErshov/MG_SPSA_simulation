@@ -39,30 +39,32 @@ CONFIG = {
         [18.0, 10.0, 1.8],
     ],
 
-    # SPSA optimizer parameters (aligned with article theory)
-    "spsa_optimizer": {
-        # Practical Spall formula: alpha_n = a / (A + n)^alpha
-        "a": 1.0,  # Step size amplitude
-        "alpha": 0.602,  # Decay exponent (standard SPSA value)
-        "A": 50.0,  # Stability constant (prevents freeze in online control)
+    # Mixed optimizer parameters (aligned with article theory)
+    "mixed_optimizer": {
+        # Step size: alpha_n = a / (n + burn_in)
+        #   burn_in=0 recovers pure a/n (Theorem 3.1).
+        #   burn_in>0 stabilises online control without changing asymptotics.
+        "a": 20.0,      # Step size amplitude
+        "burn_in": 50,  # Practical stabiliser for high-frequency online control
 
-        # Corollary 4.2 balanced gamma for q=1 effective defect: gamma = 1/4
+        # Perturbation: beta_n = c / (n + burn_in)^{gamma}
+        # gamma is auto-derived from block defect order q:
+        #   off-center q=1 -> gamma = 1/4  (Corollary 4.2)
+        #   centered  q=2 -> gamma = 1/6
         "c": 0.2,  # Perturbation amplitude
-        "gamma": 0.25,  # Perturbation decay exponent
 
         # From Lemma 6.1 / Theorem 3.1
-        "num_perturbations": 8,  # N perturbations per iteration (more averaging)
+        "num_perturbations": 8,  # N perturbations per iteration
         "decorrelation_exponent": 1.0,  # Rho for variance decay
-        "gradient_momentum": 0.25,  # EMA momentum for g_phi smoothing
 
-        # Exact gradient channel (w block)
-        "epsilon_w": 0.01,  # Finite-difference step for exact speed gradient
+        # Exact gradient fallback (central FD when no analytic grad supplied)
+        "epsilon_exact": 0.01,
 
         # Parameter constraints
-        "speed_min": 0.0,  # Minimum speed (m/s)
-        "speed_max": 10.0,  # Maximum speed (m/s)
-        "direction_min": -3.141592653589793,  # Minimum direction (rad)
-        "direction_max": 3.141592653589793,  # Maximum direction (rad)
+        "speed_min": 0.0,
+        "speed_max": 10.0,
+        "direction_min": -3.141592653589793,
+        "direction_max": 3.141592653589793,
     },
 
     # Gradient Descent optimizer parameters

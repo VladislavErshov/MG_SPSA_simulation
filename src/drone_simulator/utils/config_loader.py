@@ -7,15 +7,12 @@ import numpy as np
 
 from ..core import DroneConfig, SimulationConfig
 from ..optimizers import (
-    GradientDescentConfig,
-    SPSAConfig,
-    TargetFollowingGD,
+    MixedOptimizerConfig,
     TargetFollowingSPSA,
 )
 
 # Import unified configuration
 from ..config import CONFIG, PhysicsConfig, SimulationConfig as SimDict
-
 
 
 def load_simulation_config(config_dir: Path = Path("configs")) -> Dict[str, Any]:
@@ -24,8 +21,7 @@ def load_simulation_config(config_dir: Path = Path("configs")) -> Dict[str, Any]
     Expects the following layout under *config_dir*::
 
         simulation/default.json   – simulation, physics and obstacle parameters
-        spsa/default.json         – SPSA hyper-parameters
-        gd/default.json           – Gradient Descent hyper-parameters
+        mixed/default.json        – Mixed optimizer hyper-parameters
 
     Returns a dict with ready-to-use objects:
         - 'simulation': SimulationConfig
@@ -33,10 +29,8 @@ def load_simulation_config(config_dir: Path = Path("configs")) -> Dict[str, Any]
         - 'target_position': np.ndarray
         - 'obstacles': list[list[float]]
         - 'physics': dict
-        - 'spsa_config': SPSAConfig
-        - 'gd_config': GradientDescentConfig
-        - 'spsa_optimizer': TargetFollowingSPSA instance
-        - 'gd_optimizer': TargetFollowingGD instance
+        - 'mixed_config': MixedOptimizerConfig
+        - 'mixed_optimizer': TargetFollowingSPSA instance
     """
     return load_simulation_config_unified()
 
@@ -57,10 +51,7 @@ def load_simulation_config_unified() -> Dict[str, Any]:
         "target_position": np.array(CONFIG["target_position"]),
         "obstacles": CONFIG["obstacles"],
         "physics": CONFIG["physics"],
-        "spsa_config": SPSAConfig(**CONFIG["spsa_optimizer"]),
-        "gd_config": GradientDescentConfig(**CONFIG["gd_optimizer"]),
-        "spsa_optimizer": TargetFollowingSPSA(SPSAConfig(**CONFIG["spsa_optimizer"])),
-        "gd_optimizer": TargetFollowingGD(GradientDescentConfig(**CONFIG["gd_optimizer"])),
+        "mixed_config": MixedOptimizerConfig(**CONFIG["mixed_optimizer"]),
+        "mixed_optimizer": TargetFollowingSPSA(MixedOptimizerConfig(**CONFIG["mixed_optimizer"])),
         "metrics": CONFIG["metrics"],
     }
-

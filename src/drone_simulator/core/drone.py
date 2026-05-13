@@ -8,7 +8,7 @@ from typing import List, Tuple, Optional, Dict
 
 import numpy as np
 
-from ..optimizers import BaseOptimizer, SPSAConfig, GradientDescentConfig, TargetFollowingSPSA, TargetFollowingGD
+from ..optimizers import BaseOptimizer, MixedOptimizerConfig, TargetFollowingSPSA
 
 
 @dataclass
@@ -72,15 +72,9 @@ class Drone:
         # Initialize optimizer
         if optimizer_config is not None:
             self.optimizer = optimizer_config
-        elif self.config.optimizer_type.lower() == "gd":
-            gd_config = GradientDescentConfig(
-                lr=0.1, epsilon=0.01, max_grad_norm=5.0,
-                speed_min=0.0, speed_max=self.config.max_speed,
-            )
-            self.optimizer = TargetFollowingGD(gd_config)
         else:
-            spsa_config = SPSAConfig(
-                a=1.0, c=0.2,
+            spsa_config = MixedOptimizerConfig(
+                a=20.0, c=0.2, burn_in=50,
                 speed_min=0.0, speed_max=self.config.max_speed,
             )
             self.optimizer = TargetFollowingSPSA(spsa_config)

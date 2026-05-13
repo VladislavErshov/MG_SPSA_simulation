@@ -9,6 +9,10 @@ Tracks and displays performance metrics per technical specification:
 - Time/steps to reach target
 - Minimum distance to obstacles
 - Collision count
+
+TODO: Comparison mode is temporarily disabled. The current focus is on
+validating the MixedOptimizer theory (exact gradient + SPSA blocks) against
+the article. Re-enable comparison after theoretical alignment is complete.
 """
 
 import json
