@@ -39,10 +39,9 @@ class Drone:
 
     Physics implementation:
     - Velocity update: V_{t+1} = V_t + alpha * (V_cmd - V_t)
-    - Position update: X_{t+1} = X_t + V_{t+1} * dt
-    - Collision: If drone enters obstacle radius R, V_{t+1} = 0 (instant stop)
-
-    The drone attempts to escape obstacles in subsequent steps.
+    - Position update: X_{t+1} = X_t + (V_{t+1} + wind) * dt
+    - Collision: If next position is inside obstacle, position is not updated;
+      instead velocity is set to point away from obstacle.
     """
 
     def __init__(self, position: np.ndarray, config: Optional[DroneConfig] = None,
@@ -53,6 +52,7 @@ class Drone:
         self.position = np.array(position).astype(float)
         self.velocity = np.array([0.0, 0.0])  # V_t - current velocity
         self.command_velocity = np.array([0.0, 0.0])  # V_cmd - desired velocity from optimizer
+        self.wind = np.array([0.0, 0.0])  # Constant wind vector [vx, vy]
 
         # History for analysis
         self.trajectory = [self.position.copy()]
@@ -86,6 +86,12 @@ class Drone:
     def set_obstacles(self, obstacles: List[Tuple[float, float, float]]):
         """Set circular obstacles (x, y, radius)"""
         self.obstacles = [list(obs) for obs in obstacles] if obstacles else []
+
+    def set_wind(self, wind_vector: np.ndarray):
+        """Set constant wind vector [vx, vy] in m/s"""
+        self.wind = np.array(wind_vector).astype(float)
+        if hasattr(self.optimizer, 'set_wind'):
+            self.optimizer.set_wind(self.wind)
 
     def _compute_desired_control(self) -> Tuple[float, float]:
         """
@@ -137,6 +143,21 @@ class Drone:
                     away_vec = np.array([1.0, 0.0])
         return away_vec * max(bounce_speed, 0.2)
 
+    def _resolve_collision(self, position: np.ndarray, margin: float = 0.05) -> np.ndarray:
+        """Push position to outside of all obstacles with small margin."""
+        resolved = position.copy()
+        for obs in self.obstacles:
+            obs_pos = np.array(obs[:2])
+            obs_radius = obs[2] if len(obs) > 2 else 1.0
+            diff = resolved - obs_pos
+            dist = np.linalg.norm(diff)
+            if dist < obs_radius + margin:
+                if dist > 1e-8:
+                    resolved = obs_pos + diff / dist * (obs_radius + margin)
+                else:
+                    resolved = obs_pos + np.array([obs_radius + margin, 0.0])
+        return resolved
+
     def _apply_physics_step(self):
         """
         Apply physics step with inertia and collision handling.
@@ -172,19 +193,26 @@ class Drone:
                 acceleration = acceleration / accel_mag * self.config.max_acceleration
                 self.velocity = prev_velocity + acceleration * self.config.dt
 
-        # Step 4: Predict next position
-        next_position = self.position + self.velocity * self.config.dt
+        # Step 4: Predict next position (ground velocity = air velocity + wind)
+        ground_velocity = self.velocity + self.wind
+        next_position = self.position + ground_velocity * self.config.dt
 
-        # Step 5: Check collision at next position
-        in_collision = self._check_collision(next_position)
+        # Step 5: Advance position
+        self.position += ground_velocity * self.config.dt
 
-        # Step 6: If collision detected, bounce away from obstacle
+        # Step 6: If inside obstacle, push to boundary and bounce
+        in_collision = self._check_collision(self.position)
         if in_collision:
             self.consecutive_collisions += 1
-            bounce_speed = np.linalg.norm(self.velocity) * 0.2
-            if self.consecutive_collisions > 2:
-                bounce_speed = max(bounce_speed, 1.5)
-            self.velocity = self._bounce_from_obstacle(next_position, bounce_speed)
+            # Push to outside of obstacle
+            self.position = self._resolve_collision(self.position)
+            # Strong bounce: must overcome wind to escape
+            bounce_speed = max(
+                np.linalg.norm(self.velocity) * 0.5,
+                np.linalg.norm(self.wind) * 2.0,
+                2.0,
+            )
+            self.velocity = self._bounce_from_obstacle(self.position, bounce_speed)
         else:
             self.consecutive_collisions = 0
 
@@ -195,12 +223,12 @@ class Drone:
                 # Random perturbation to escape local minimum
                 self.optimizer.theta[0] = 1.5
                 self.optimizer.theta[1] += float(np.random.choice([-1, 1])) * 0.5
+                if len(self.optimizer.theta) > 2:
+                    self.optimizer.theta[2] += float(np.random.choice([-1, 1])) * 0.3
                 self.stuck_steps = 0
         else:
             self.stuck_steps = 0
 
-        # Step 7: Update position (even in collision - allows escape attempt)
-        self.position += self.velocity * self.config.dt
         self.time += self.config.dt
 
         # Store history
