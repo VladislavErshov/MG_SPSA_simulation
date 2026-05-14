@@ -45,6 +45,7 @@ def run_one(seed: int):
     )
     drone.set_target(np.array(CONFIG['target_position']))
     drone.set_obstacles(CONFIG['obstacles'])
+    drone.set_wind(np.array([CONFIG['wind']['vx'], CONFIG['wind']['vy']]))
 
     max_steps = int(CONFIG['simulation']['duration'] / CONFIG['physics']['dt'])
     for _ in range(max_steps):
@@ -60,10 +61,12 @@ def run_one(seed: int):
 # ------------------------------------------------------------------
 def synthetic_convergence(n_runs: int = 20, n_steps: int = 500):
     """
-    Optimize  L(theta) = ||theta - theta_star||^2  with MixedOptimizer.
+    Decoupled 3-parameter quadratic:
+        L(theta) = ||theta - theta_star||^2
+    Optimum: w*=5.0, phi*=0.5, wind*=2.0.
     Returns arrays: n_values, mean_error, std_error.
     """
-    theta_star = np.array([5.0, 0.5])
+    theta_star = np.array([5.0, 0.5, 2.0])
 
     def loss(theta):
         return float(np.sum((theta - theta_star) ** 2))
@@ -75,14 +78,16 @@ def synthetic_convergence(n_runs: int = 20, n_steps: int = 500):
         config = MixedOptimizerConfig(
             a=1.0, c=0.2, burn_in=0, num_perturbations=8,
             speed_min=0.0, speed_max=10.0,
+            wind_estimate_min=-5.0, wind_estimate_max=5.0,
         )
         blocks = [
             BlockConfig(slice(0, 1), method="exact", q=0),
             BlockConfig(slice(1, 2), method="spsa_off_center", q=1),
+            BlockConfig(slice(2, 3), method="exact", q=0),
         ]
         opt = MixedOptimizer(config, loss, blocks=blocks)
-        # Start away from optimum so that both blocks have to work
-        opt.theta = np.array([1.0, -1.0])
+        # Start away from optimum so that all blocks have to work
+        opt.theta = np.array([1.0, -1.0, 0.0])
 
         errors = []
         for _ in range(n_steps):
@@ -130,6 +135,23 @@ def plot_results(drones, base_seed):
     for obs in obstacles:
         circle = plt.Circle((obs[0], obs[1]), obs[2], color='red', alpha=0.2)
         ax.add_patch(circle)
+
+    # Wind arrow
+    wind = np.array([CONFIG['wind']['vx'], CONFIG['wind']['vy']])
+    if np.linalg.norm(wind) > 1e-6:
+        ax.annotate(
+            '',
+            xy=start + wind * 2,
+            xytext=start,
+            arrowprops=dict(arrowstyle='->', color='blue', lw=2),
+        )
+        ax.text(
+            start[0] + wind[0] * 2.2,
+            start[1] + wind[1] * 2.2,
+            f"wind {np.linalg.norm(wind):.1f} m/s",
+            color='blue',
+            fontsize=9,
+        )
 
     ax.set_xlabel("X (m)")
     ax.set_ylabel("Y (m)")

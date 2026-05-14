@@ -30,14 +30,19 @@ python -m pytest tests/
 
 All parameters are in `src/drone_simulator/config.py`.
 
-Key section: `mixed_optimizer`:
-- `a` — step-size amplitude
-- `burn_in` — offset for `alpha_n = a/(n+burn_in)` (0 = pure article theory)
-- `c` — perturbation amplitude
-- `num_perturbations` — N probes per SPSA block
+Key sections:
+- `mixed_optimizer`:
+  - `a` — step-size amplitude
+  - `burn_in` — offset for `alpha_n = a/(n+burn_in)` (0 = pure article theory)
+  - `c` — perturbation amplitude
+  - `num_perturbations` — N probes per SPSA block
+- `wind` — constant external force vector `[vx, vy]` (m/s)
 
 ## Architecture
 
 - `MixedOptimizer` — modular mixed-gradient optimizer. Each parameter block can use `exact` gradient or `spsa_off_center` / `spsa_centered`.
-- `TargetFollowingSPSA` — drone specialization: speed via analytical exact gradient, direction via one-measurement SPSA (`q=1`, `gamma=1/4`).
-- `Drone` — physics with inertia `V_{t+1} = V_t + alpha*(V_cmd - V_t)` and collision handling.
+- `TargetFollowingSPSA` — drone specialization with 3 blocks:
+  1. `speed` — analytical exact gradient
+  2. `direction` — one-measurement SPSA (`q=1`, `gamma=1/4`)
+  3. `wind_estimate` — one-measurement SPSA (`q=1`, `gamma=1/4`)
+- `Drone` — physics with inertia `V_{t+1} = V_t + alpha*(V_cmd - V_t)`, wind drift, and collision handling.
