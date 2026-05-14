@@ -52,6 +52,7 @@ def test_mixed_optimizer_step():
     blocks = [
         BlockConfig(slice(0, 1), method="exact", q=0),
         BlockConfig(slice(1, 2), method="spsa_off_center", q=1),
+        BlockConfig(slice(2, 3), method="spsa_off_center", q=1),
     ]
     optimizer = MixedOptimizer(config, dummy_loss, blocks=blocks)
     params, loss, gradient = optimizer.step()
@@ -60,7 +61,7 @@ def test_mixed_optimizer_step():
     assert len(optimizer.history['parameters']) == 1
     assert len(optimizer.history['loss']) == 1
     assert len(optimizer.history['gradients']) == 1
-    assert gradient.shape == (2,)
+    assert gradient.shape == (3,)
 
 
 def test_parameter_clipping():
@@ -103,7 +104,7 @@ def test_target_following_step_with_state():
 
     params, loss, gradient = optimizer.step_with_state(position, target, obstacles)
     assert loss >= 0.0
-    assert params.shape == (2,)
+    assert params.shape == (3,)
 
 
 def test_create_test_scenario():

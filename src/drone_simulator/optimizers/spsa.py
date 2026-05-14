@@ -64,6 +64,12 @@ class MixedOptimizer(BaseOptimizer):
             (sl.stop or self.param_dim) - (sl.start or 0)
             for sl, _, _ in self._iter_blocks()
         )
+        # Re-initialize theta if param_dim changed from BaseOptimizer default
+        if self.theta.shape[0] != self.param_dim:
+            new_theta = np.zeros(self.param_dim)
+            min_dim = min(self.theta.shape[0], self.param_dim)
+            new_theta[:min_dim] = self.theta[:min_dim]
+            self.theta = new_theta
         # EMA state per SPSA block
         self._ema = {}
 
@@ -224,27 +230,45 @@ class MixedOptimizer(BaseOptimizer):
 # ===================================================================
 
 class TargetFollowingSPSA(MixedOptimizer):
-    """Drone optimizer: speed by exact gradient, direction by one-measurement SPSA."""
+    """Drone optimizer: speed + wind by exact gradient, direction by one-measurement SPSA."""
 
     def __init__(self, config: MixedOptimizerConfig):
         blocks = [
             BlockConfig(slice(0, 1), method="exact", q=0),
             BlockConfig(slice(1, 2), method="spsa_off_center", q=1),
+            BlockConfig(slice(2, 3), method="exact", q=0),
         ]
         super().__init__(config, self._dynamic_loss, blocks=blocks)
+
+        # Re-initialize theta for 3 parameters: [speed, direction, wind_estimate]
+        self.theta = np.array([
+            (config.speed_max + config.speed_min) / 2,
+            0.0,
+            0.0,
+        ])
 
         self.current_position = np.array([0.0, 0.0])
         self.target_position = np.array([0.0, 0.0])
         self.obstacles = []
+        self.wind_vector = np.array([0.0, 0.0])
 
     def _dynamic_loss(self, params: np.ndarray, **kwargs) -> float:
         """Dynamic loss from article Section 5.2 (Drone Control)."""
         speed = params[0]
         direction = params[1]
+        wind_estimate = params[2] if len(params) > 2 else 0.0
 
         look_ahead_time = kwargs.get('look_ahead_time', 0.5)
-        dx = speed * np.cos(direction) * look_ahead_time
-        dy = speed * np.sin(direction) * look_ahead_time
+
+        # Wind estimate: assume same direction as true wind, optimize magnitude
+        if np.linalg.norm(self.wind_vector) > 1e-8:
+            wind_dir = self.wind_vector / np.linalg.norm(self.wind_vector)
+        else:
+            wind_dir = np.array([0.0, 0.0])
+        predicted_wind = wind_estimate * wind_dir
+
+        dx = (speed * np.cos(direction) + predicted_wind[0]) * look_ahead_time
+        dy = (speed * np.sin(direction) + predicted_wind[1]) * look_ahead_time
         next_position = self.current_position + np.array([dx, dy])
 
         loss = 0.0
@@ -300,19 +324,29 @@ class TargetFollowingSPSA(MixedOptimizer):
     def _compute_exact_gradient(self, theta: np.ndarray, block_slice: slice,
                                 analytic_fn: Optional[Callable] = None,
                                 **loss_kwargs) -> np.ndarray:
-        """Override exact gradient to use analytical form for the speed block."""
+        """Override exact gradient to use analytical form for speed and wind blocks."""
         if block_slice == slice(0, 1):
             return np.array([self._analytical_gradient_speed(theta, **loss_kwargs)])
+        if block_slice == slice(2, 3):
+            return np.array([self._analytical_gradient_wind(theta, **loss_kwargs)])
         return super()._compute_exact_gradient(theta, block_slice, analytic_fn, **loss_kwargs)
 
     def _analytical_gradient_speed(self, theta: np.ndarray, **loss_kwargs) -> float:
         """Analytical partial derivative dL/d(speed)."""
         speed = theta[0]
         direction = theta[1]
+        wind_estimate = theta[2] if len(theta) > 2 else 0.0
         look_ahead_time = loss_kwargs.get('look_ahead_time', 0.5)
 
         dir_vec = np.array([np.cos(direction), np.sin(direction)])
-        next_position = self.current_position + speed * dir_vec * look_ahead_time
+
+        if np.linalg.norm(self.wind_vector) > 1e-8:
+            wind_dir = self.wind_vector / np.linalg.norm(self.wind_vector)
+        else:
+            wind_dir = np.array([0.0, 0.0])
+        predicted_wind = wind_estimate * wind_dir
+
+        next_position = self.current_position + (speed * dir_vec + predicted_wind) * look_ahead_time
 
         grad = 0.0
 
@@ -357,6 +391,55 @@ class TargetFollowingSPSA(MixedOptimizer):
             grad += (5.0 - dist_to_target_current) * 0.5
 
         return grad
+
+    def _analytical_gradient_wind(self, theta: np.ndarray, **loss_kwargs) -> float:
+        """Analytical partial derivative dL/d(wind_estimate)."""
+        speed = theta[0]
+        direction = theta[1]
+        wind_estimate = theta[2] if len(theta) > 2 else 0.0
+        look_ahead_time = loss_kwargs.get('look_ahead_time', 0.5)
+
+        dir_vec = np.array([np.cos(direction), np.sin(direction)])
+
+        if np.linalg.norm(self.wind_vector) > 1e-8:
+            wind_dir = self.wind_vector / np.linalg.norm(self.wind_vector)
+        else:
+            wind_dir = np.array([0.0, 0.0])
+        predicted_wind = wind_estimate * wind_dir
+
+        next_position = self.current_position + (speed * dir_vec + predicted_wind) * look_ahead_time
+
+        grad = 0.0
+
+        # 1. Distance to target
+        diff = next_position - self.target_position
+        grad += 2.0 * look_ahead_time * np.dot(diff, wind_dir)
+
+        # 2. Obstacle avoidance
+        obstacle_weight = loss_kwargs.get('obstacle_weight', 100.0)
+        avoidance_strength = loss_kwargs.get('avoidance_strength', 2.0)
+        safety_margin = loss_kwargs.get('safety_margin', 0.3)
+
+        for obs in self.obstacles:
+            obs_pos = np.array(obs[:2])
+            obs_radius = obs[2] if len(obs) > 2 else 1.0
+            effective_radius = obs_radius + safety_margin
+
+            diff_obs = next_position - obs_pos
+            dist_obs = np.linalg.norm(diff_obs)
+            if dist_obs < 1e-8:
+                continue
+
+            d_dist_dwind = look_ahead_time * np.dot(diff_obs, wind_dir) / dist_obs
+            if dist_obs < effective_radius:
+                grad += -2.0 * obstacle_weight * (effective_radius - dist_obs) * d_dist_dwind
+            else:
+                grad += -avoidance_strength / ((dist_obs - effective_radius + 1e-6) ** 2) * d_dist_dwind
+
+        return grad
+
+    def set_wind(self, wind_vector: np.ndarray):
+        self.wind_vector = np.array(wind_vector).astype(float)
 
     def update_state(self, position: np.ndarray, target: np.ndarray, obstacles: List):
         self.current_position = position.copy()

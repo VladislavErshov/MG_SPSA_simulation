@@ -39,6 +39,13 @@ CONFIG = {
         [18.0, 10.0, 1.8],
     ],
 
+    # Wind (constant external force, [vx, vy] in m/s)
+    "wind": {
+        "enabled": True,
+        "vx": 2.0,
+        "vy": 1.0,
+    },
+
     # Mixed optimizer parameters (aligned with article theory)
     "mixed_optimizer": {
         # Step size: alpha_n = a / (n + burn_in)
@@ -65,6 +72,8 @@ CONFIG = {
         "speed_max": 10.0,
         "direction_min": -3.141592653589793,
         "direction_max": 3.141592653589793,
+        "wind_estimate_min": -5.0,
+        "wind_estimate_max": 5.0,
     },
 
     # Gradient Descent optimizer parameters

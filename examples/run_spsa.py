@@ -39,6 +39,7 @@ def run_single(seed: int = None):
     )
     drone.set_target(np.array(CONFIG['target_position']))
     drone.set_obstacles(CONFIG['obstacles'])
+    drone.set_wind(np.array([CONFIG['wind']['vx'], CONFIG['wind']['vy']]))
 
     # Симуляция
     max_steps = int(CONFIG['simulation']['duration'] / CONFIG['physics']['dt'])

@@ -32,6 +32,8 @@ class OptimizerConfig:
     speed_max: float = 10.0
     direction_min: float = -np.pi
     direction_max: float = np.pi
+    wind_estimate_min: float = -5.0
+    wind_estimate_max: float = 5.0
     max_direction_delta: float = 0.1  # Maximum direction change per step (rad)
 
 
@@ -85,6 +87,10 @@ class BaseOptimizer(ABC):
         """Get current direction command in radians"""
         return self.theta[1] if len(self.theta) > 1 else 0.0
 
+    def get_wind_estimate(self) -> float:
+        """Get current wind estimate"""
+        return self.theta[2] if len(self.theta) > 2 else 0.0
+
     def get_velocity_command(self) -> np.ndarray:
         """Get current velocity command as [vx, vy] vector"""
         speed = self.get_speed()
@@ -134,6 +140,14 @@ class BaseOptimizer(ABC):
             theta_clipped[1] = np.arctan2(
                 np.sin(theta_clipped[1]),
                 np.cos(theta_clipped[1])
+            )
+
+        # Clip wind estimate
+        if len(theta_clipped) > 2:
+            theta_clipped[2] = np.clip(
+                theta_clipped[2],
+                self.config.wind_estimate_min,
+                self.config.wind_estimate_max
             )
 
         return theta_clipped
