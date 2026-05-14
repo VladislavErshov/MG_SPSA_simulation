@@ -1,9 +1,10 @@
 """
-Запуск N прогонов MixedOptimizer и визуализация всех траекторий.
+Запуск N прогонов MixedOptimizer и визуализация всех траекторий
++ верификация скорости сходимости по синтетическому квадратичному тесту.
 
 Примеры:
-    python examples/run_and_plot.py          # 1 прогон
-    python examples/run_and_plot.py --runs 10    # 10 прогонов
+    python examples/run_and_plot.py               # 1 прогон
+    python examples/run_and_plot.py --runs 10     # 10 прогонов
     python examples/run_and_plot.py --runs 10 --seed 42
 """
 
@@ -19,9 +20,17 @@ import numpy as np
 
 from src.drone_simulator.core.drone import Drone, DroneConfig
 from src.drone_simulator.config import CONFIG
-from src.drone_simulator.optimizers import MixedOptimizerConfig, TargetFollowingSPSA
+from src.drone_simulator.optimizers import (
+    MixedOptimizer,
+    MixedOptimizerConfig,
+    BlockConfig,
+    TargetFollowingSPSA,
+)
 
 
+# ------------------------------------------------------------------
+# Drone runs
+# ------------------------------------------------------------------
 def run_one(seed: int):
     np.random.seed(seed)
 
@@ -46,15 +55,66 @@ def run_one(seed: int):
     return drone
 
 
+# ------------------------------------------------------------------
+# Synthetic convergence test
+# ------------------------------------------------------------------
+def synthetic_convergence(n_runs: int = 20, n_steps: int = 500):
+    """
+    Optimize  L(theta) = ||theta - theta_star||^2  with MixedOptimizer.
+    Returns arrays: n_values, mean_error, std_error.
+    """
+    theta_star = np.array([5.0, 0.5])
+
+    def loss(theta):
+        return float(np.sum((theta - theta_star) ** 2))
+
+    errors_all = []
+
+    for seed in range(n_runs):
+        np.random.seed(seed)
+        config = MixedOptimizerConfig(
+            a=1.0, c=0.2, burn_in=0, num_perturbations=8,
+            speed_min=0.0, speed_max=10.0,
+        )
+        blocks = [
+            BlockConfig(slice(0, 1), method="exact", q=0),
+            BlockConfig(slice(1, 2), method="spsa_off_center", q=1),
+        ]
+        opt = MixedOptimizer(config, loss, blocks=blocks)
+        # Start away from optimum so that both blocks have to work
+        opt.theta = np.array([1.0, -1.0])
+
+        errors = []
+        for _ in range(n_steps):
+            opt.step()
+            err = float(np.sum((opt.theta - theta_star) ** 2))
+            errors.append(err)
+        errors_all.append(errors)
+
+    errors_arr = np.array(errors_all)  # shape: (n_runs, n_steps)
+    n_values = np.arange(1, n_steps + 1)
+    mean_err = np.mean(errors_arr, axis=0)
+    std_err = np.std(errors_arr, axis=0)
+
+    return n_values, mean_err, std_err
+
+
+# ------------------------------------------------------------------
+# Plotting
+# ------------------------------------------------------------------
 def plot_results(drones, base_seed):
     obstacles = CONFIG['obstacles']
     target = np.array(CONFIG['target_position'])
     start = np.array(CONFIG['initial_position'])
 
-    fig, axes = plt.subplots(1, 2, figsize=(14, 6))
-    fig.suptitle(f"MixedOptimizer Trajectories (N={len(drones)})", fontsize=14)
+    fig, axes = plt.subplots(2, 2, figsize=(14, 12))
+    fig.suptitle(
+        f"MixedOptimizer — Trajectories + Convergence Verification (N={len(drones)})",
+        fontsize=14,
+    )
 
-    ax = axes[0]
+    # ---- [0,0] Trajectories ----
+    ax = axes[0, 0]
     colors = plt.cm.viridis(np.linspace(0, 1, len(drones)))
 
     for i, drone in enumerate(drones):
@@ -64,12 +124,9 @@ def plot_results(drones, base_seed):
         ax.plot(traj[:, 0], traj[:, 1], color=colors[i], alpha=0.7, linewidth=1.5, label=label)
         ax.scatter(traj[0, 0], traj[0, 1], color=colors[i], marker='o', s=30, zorder=5)
 
-    # Target
     ax.scatter(target[0], target[1], color='red', marker='*', s=200, label='Target', zorder=5)
-    # Start
     ax.scatter(start[0], start[1], color='green', marker='s', s=100, label='Start', zorder=5)
 
-    # Obstacles
     for obs in obstacles:
         circle = plt.Circle((obs[0], obs[1]), obs[2], color='red', alpha=0.2)
         ax.add_patch(circle)
@@ -81,8 +138,8 @@ def plot_results(drones, base_seed):
     ax.grid(True, alpha=0.3)
     ax.axis("equal")
 
-    # Stats table
-    ax2 = axes[1]
+    # ---- [0,1] Statistics ----
+    ax2 = axes[0, 1]
     ax2.axis('off')
 
     stats = []
@@ -114,6 +171,45 @@ def plot_results(drones, base_seed):
              verticalalignment='top', fontfamily='monospace',
              bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
     ax2.set_title("Statistics")
+
+    # ---- [1,0] Synthetic convergence (log-log) ----
+    ax3 = axes[1, 0]
+    n_vals, mean_err, std_err = synthetic_convergence(n_runs=20, n_steps=500)
+
+    ax3.loglog(n_vals, mean_err, color='blue', linewidth=2, label='Mean error over 20 runs')
+    ax3.fill_between(n_vals, mean_err - std_err, mean_err + std_err, color='blue', alpha=0.15)
+
+    # Reference slopes
+    ref_05 = mean_err[0] * (n_vals[0] ** 0.5) * (n_vals ** (-0.5))
+    ref_10 = mean_err[0] * n_vals[0] * (n_vals ** (-1.0))
+    ax3.loglog(n_vals, ref_05, 'k--', linewidth=1.5, label='n^{-1/2}  theory q=1 off-center')
+    ax3.loglog(n_vals, ref_10, 'k:', linewidth=1.5, label='n^{-1}    exact gradient only')
+
+    ax3.set_xlabel("Iteration n")
+    ax3.set_ylabel("E||theta_n - theta*||^2")
+    ax3.set_title("Convergence Verification — Synthetic Quadratic")
+    ax3.legend(fontsize=9)
+    ax3.grid(True, alpha=0.3, which='both')
+
+    # ---- [1,1] Drone loss history (mean across runs) ----
+    ax4 = axes[1, 1]
+    max_len = max(len(d.optimizer.history['loss']) for d in drones)
+    loss_matrix = np.full((len(drones), max_len), np.nan)
+    for i, drone in enumerate(drones):
+        hist = drone.optimizer.history['loss']
+        loss_matrix[i, :len(hist)] = hist
+
+    mean_loss = np.nanmean(loss_matrix, axis=0)
+    std_loss = np.nanstd(loss_matrix, axis=0)
+    t_vals = np.arange(len(mean_loss)) * CONFIG['physics']['dt']
+
+    ax4.plot(t_vals, mean_loss, color='green', linewidth=2, label='Mean loss')
+    ax4.fill_between(t_vals, mean_loss - std_loss, mean_loss + std_loss, color='green', alpha=0.15)
+    ax4.set_xlabel("Time (s)")
+    ax4.set_ylabel("Loss")
+    ax4.set_title("Drone Loss History (mean over runs)")
+    ax4.legend()
+    ax4.grid(True, alpha=0.3)
 
     plt.tight_layout()
 
