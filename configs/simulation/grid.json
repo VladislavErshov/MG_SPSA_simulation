@@ -22,7 +22,7 @@
     "collision_detection": true
   },
   "wind": {
-    "enabled": true,
+    
     "vx": -1.2,
     "vy": 1.6
   },

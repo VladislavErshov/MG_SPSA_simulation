@@ -22,9 +22,8 @@
     "collision_detection": true
   },
   "wind": {
-    "enabled": false,
-    "vx": -1.2,
-    "vy": 1.6
+    "vx": 0.0,
+    "vy": 0.0
   },
   "metrics": {
     "target_tolerance": 1.0,
