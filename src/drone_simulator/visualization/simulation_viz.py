@@ -9,6 +9,26 @@ from matplotlib.patches import Circle
 from ..core.drone import Drone
 
 
+def draw_obstacle(ax, obs, color="red", alpha=0.3, fill=True):
+    x, y, r = obs[0], obs[1], obs[2]
+    obs_type = obs[3] if len(obs) > 3 else "circle"
+    if obs_type == "star6":
+        n = 6
+        outer_r = r * 1.5
+        inner_r = r * 0.75
+        angles = np.linspace(0, 2 * np.pi, 2 * n, endpoint=False) - np.pi / 2
+        radii = np.tile([outer_r, inner_r], n)
+        xs = x + radii * np.cos(angles)
+        ys = y + radii * np.sin(angles)
+        polygon = plt.Polygon(list(zip(xs, ys)), color=color, alpha=alpha, fill=fill)
+        ax.add_patch(polygon)
+        ax.plot(x, y, "rx", markersize=8)
+    else:
+        circle = Circle((x, y), r, color=color, alpha=alpha, fill=fill)
+        ax.add_patch(circle)
+        ax.plot(x, y, "rx", markersize=8)
+
+
 class SimulationVisualizer:
     """Handles all matplotlib-based visualization for a drone simulation."""
 
@@ -84,9 +104,7 @@ class SimulationVisualizer:
                 markeredgewidth=1,
             )
         for obs in getattr(self.drones[0], "obstacles", []):
-            circle = Circle((obs[0], obs[1]), obs[2], color="red", alpha=0.3, fill=True)
-            ax.add_patch(circle)
-            ax.plot(obs[0], obs[1], "rx", markersize=8)
+            draw_obstacle(ax, obs)
         ax.set_xlabel("X Position (m)")
         ax.set_ylabel("Y Position (m)")
         ax.set_title("Drone Trajectories")

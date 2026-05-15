@@ -27,6 +27,7 @@ from src.drone_simulator.optimizers import (
     BlockConfig,
     TargetFollowingSPSA,
 )
+from src.drone_simulator.visualization.simulation_viz import draw_obstacle
 
 
 # ------------------------------------------------------------------
@@ -134,8 +135,7 @@ def plot_results(drones, base_seed, cfg: dict):
     ax.scatter(start[0], start[1], color='green', marker='s', s=100, label='Start', zorder=5)
 
     for obs in obstacles:
-        circle = plt.Circle((obs[0], obs[1]), obs[2], color='red', alpha=0.2)
-        ax.add_patch(circle)
+        draw_obstacle(ax, obs, alpha=0.2)
 
     # Wind arrow
     wind = np.array([cfg['wind']['vx'], cfg['wind']['vy']])
