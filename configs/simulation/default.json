@@ -2,23 +2,38 @@
   "duration": 30.0,
   "dt": 0.05,
   "update_interval": 1,
-  "plot_interval": 10,
+  "plot_interval": 5,
   "initial_position": [0.0, 0.0],
   "target_position": [20.0, 15.0],
   "obstacles": [
-    [5.0, 5.0, 1.5],
-    [10.0, 8.0, 2.0],
-    [15.0, 12.0, 1.8],
-    [8.0, 15.0, 1.5],
-    [18.0, 10.0, 1.2]
+    [5.0, 5.0, 2.0],
+    [10.0, 8.0, 1.5],
+    [15.0, 12.0, 2.5],
+    [8.0, 15.0, 2.0],
+    [18.0, 10.0, 1.8]
   ],
   "spsa_config": "configs/spsa/default.json",
   "gd_config": "configs/gd/default.json",
   "physics": {
-    "mass": 1.0,
-    "max_thrust": 20.0,
-    "max_speed": 8.0,
-    "inertia_coefficient": 0.85,
-    "response_time": 0.1
+    "inertia_alpha": 0.5,
+    "max_speed": 10.0,
+    "max_acceleration": 5.0,
+    "dt": 0.05,
+    "collision_detection": true
+  },
+  "wind": {
+    "enabled": true,
+    "vx": 2.0,
+    "vy": 1.0
+  },
+  "metrics": {
+    "target_tolerance": 1.0,
+    "collision_penalty": 100.0,
+    "avoidance_strength": 2.0,
+    "speed_smooth_weight": 0.2,
+    "dir_smooth_weight": 0.1,
+    "energy_weight": 0.05,
+    "look_ahead_time": 0.2,
+    "safety_margin": 0.3
   }
 }
