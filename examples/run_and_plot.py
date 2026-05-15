@@ -46,7 +46,8 @@ def run_one(seed: int, cfg: dict):
     )
     drone.set_target(np.array(cfg['target_position']))
     drone.set_obstacles(cfg['obstacles'])
-    drone.set_wind(np.array([cfg['wind']['vx'], cfg['wind']['vy']]))
+    if cfg['wind'].get('enabled', True):
+        drone.set_wind(np.array([cfg['wind']['vx'], cfg['wind']['vy']]))
 
     max_steps = int(cfg['simulation']['duration'] / cfg['physics']['dt'])
     for _ in range(max_steps):
