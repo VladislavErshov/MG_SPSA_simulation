@@ -1,9 +1,15 @@
-from .spsa import MixedVariableSPSA, SPSAConfig, TargetFollowingSPSA, create_test_scenario
+from .base import BaseOptimizer, OptimizerConfig, BlockConfig, MPCOptimizer, MPCConfig
+from .spsa import MixedOptimizer, MixedOptimizerConfig, TargetFollowingSPSA, create_test_scenario
 from .gradient import GradientDescent, GradientDescentConfig, TargetFollowingGD
 
 __all__ = [
-    "MixedVariableSPSA",
-    "SPSAConfig",
+    "BaseOptimizer",
+    "OptimizerConfig",
+    "BlockConfig",
+    "MPCOptimizer",
+    "MPCConfig",
+    "MixedOptimizer",
+    "MixedOptimizerConfig",
     "TargetFollowingSPSA",
     "create_test_scenario",
     "GradientDescent",
