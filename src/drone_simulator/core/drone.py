@@ -213,6 +213,10 @@ class Drone:
                 2.0,
             )
             self.velocity = self._bounce_from_obstacle(self.position, bounce_speed)
+            bounce_dir = np.arctan2(self.velocity[1], self.velocity[0])
+            self.optimizer.theta[1] = bounce_dir
+            if self.consecutive_collisions > 3:
+                self.optimizer.iteration = max(self.optimizer.iteration - 30, 0)
         else:
             self.consecutive_collisions = 0
 
