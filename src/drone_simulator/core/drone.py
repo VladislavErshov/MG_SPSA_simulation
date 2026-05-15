@@ -68,6 +68,8 @@ class Drone:
         self.time = 0.0
         self.consecutive_collisions = 0
         self.stuck_steps = 0
+        self.collision_cooldown = 0
+        self.last_bounce_direction = 0.0
 
         # Initialize optimizer
         if optimizer_config is not None:
@@ -107,6 +109,9 @@ class Drone:
             speed_smooth_weight=0.2, dir_smooth_weight=0.1,
             energy_weight=0.1, look_ahead_time=0.5, safety_margin=0.3
         )
+        if self.collision_cooldown > 0:
+            self.optimizer.theta[1] = self.last_bounce_direction
+            self.collision_cooldown -= 1
         return self.optimizer.get_speed(), self.optimizer.get_direction()
 
     def _check_collision(self, position: np.ndarray) -> bool:
@@ -214,6 +219,8 @@ class Drone:
             )
             self.velocity = self._bounce_from_obstacle(self.position, bounce_speed)
             bounce_dir = np.arctan2(self.velocity[1], self.velocity[0])
+            self.last_bounce_direction = bounce_dir
+            self.collision_cooldown = 15
             self.optimizer.theta[1] = bounce_dir
             if self.consecutive_collisions > 3:
                 self.optimizer.iteration = max(self.optimizer.iteration - 30, 0)

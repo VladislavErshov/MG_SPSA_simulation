@@ -52,7 +52,7 @@ CONFIG = {
         #   burn_in=0 recovers pure a/n (Theorem 3.1).
         #   burn_in>0 stabilises online control without changing asymptotics.
         "a": 20.0,      # Step size amplitude
-        "burn_in": 50,  # Practical stabiliser for high-frequency online control
+        "burn_in": 100,  # Practical stabiliser for high-frequency online control
 
         # Perturbation: beta_n = c / (n + burn_in)^{gamma}
         # gamma is auto-derived from block defect order q:
@@ -61,7 +61,7 @@ CONFIG = {
         "c": 0.2,  # Perturbation amplitude
 
         # From Lemma 6.1 / Theorem 3.1
-        "num_perturbations": 8,  # N perturbations per iteration
+        "num_perturbations": 32,  # N perturbations per iteration
         "decorrelation_exponent": 1.0,  # Rho for variance decay
 
         # Exact gradient fallback (central FD when no analytic grad supplied)
