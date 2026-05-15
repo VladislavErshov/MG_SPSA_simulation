@@ -3,9 +3,10 @@
 + верификация скорости сходимости по синтетическому квадратичному тесту.
 
 Примеры:
-    python examples/run_and_plot.py               # 1 прогон
-    python examples/run_and_plot.py --runs 10     # 10 прогонов
+    python examples/run_and_plot.py                     # 1 прогон
+    python examples/run_and_plot.py --runs 10           # 10 прогонов
     python examples/run_and_plot.py --runs 10 --seed 42
+    python examples/run_and_plot.py --config configs/simulation/grid.json --runs 10
 """
 
 import argparse
@@ -19,7 +20,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from src.drone_simulator.core.drone import Drone, DroneConfig
-from src.drone_simulator.config import CONFIG
+from src.drone_simulator.config import load_configs
 from src.drone_simulator.optimizers import (
     MixedOptimizer,
     MixedOptimizerConfig,
@@ -31,26 +32,26 @@ from src.drone_simulator.optimizers import (
 # ------------------------------------------------------------------
 # Drone runs
 # ------------------------------------------------------------------
-def run_one(seed: int):
+def run_one(seed: int, cfg: dict):
     np.random.seed(seed)
 
-    opt_cfg = MixedOptimizerConfig(**CONFIG['mixed_optimizer'])
+    opt_cfg = MixedOptimizerConfig(**cfg['mixed_optimizer'])
     optimizer = TargetFollowingSPSA(opt_cfg)
 
-    drone_cfg = DroneConfig(optimizer_type='spsa', **CONFIG['physics'])
+    drone_cfg = DroneConfig(optimizer_type='spsa', **cfg['physics'])
     drone = Drone(
-        np.array(CONFIG['initial_position']),
+        np.array(cfg['initial_position']),
         drone_cfg,
         optimizer_config=optimizer,
     )
-    drone.set_target(np.array(CONFIG['target_position']))
-    drone.set_obstacles(CONFIG['obstacles'])
-    drone.set_wind(np.array([CONFIG['wind']['vx'], CONFIG['wind']['vy']]))
+    drone.set_target(np.array(cfg['target_position']))
+    drone.set_obstacles(cfg['obstacles'])
+    drone.set_wind(np.array([cfg['wind']['vx'], cfg['wind']['vy']]))
 
-    max_steps = int(CONFIG['simulation']['duration'] / CONFIG['physics']['dt'])
+    max_steps = int(cfg['simulation']['duration'] / cfg['physics']['dt'])
     for _ in range(max_steps):
         drone.step()
-        if drone.reached_target(CONFIG['metrics']['target_tolerance']):
+        if drone.reached_target(cfg['metrics']['target_tolerance']):
             break
 
     return drone
@@ -107,10 +108,10 @@ def synthetic_convergence(n_runs: int = 20, n_steps: int = 500):
 # ------------------------------------------------------------------
 # Plotting
 # ------------------------------------------------------------------
-def plot_results(drones, base_seed):
-    obstacles = CONFIG['obstacles']
-    target = np.array(CONFIG['target_position'])
-    start = np.array(CONFIG['initial_position'])
+def plot_results(drones, base_seed, cfg: dict):
+    obstacles = cfg['obstacles']
+    target = np.array(cfg['target_position'])
+    start = np.array(cfg['initial_position'])
 
     fig, axes = plt.subplots(2, 2, figsize=(14, 12))
     fig.suptitle(
@@ -137,7 +138,7 @@ def plot_results(drones, base_seed):
         ax.add_patch(circle)
 
     # Wind arrow
-    wind = np.array([CONFIG['wind']['vx'], CONFIG['wind']['vy']])
+    wind = np.array([cfg['wind']['vx'], cfg['wind']['vy']])
     if np.linalg.norm(wind) > 1e-6:
         ax.annotate(
             '',
@@ -167,7 +168,7 @@ def plot_results(drones, base_seed):
     stats = []
     for i, drone in enumerate(drones):
         final_dist = float(np.linalg.norm(drone.position - drone.target_position))
-        reached = final_dist < CONFIG['metrics']['target_tolerance']
+        reached = final_dist < cfg['metrics']['target_tolerance']
         stats.append({
             'run': base_seed + i,
             'reached': 'OK' if reached else 'STUCK',
@@ -223,7 +224,7 @@ def plot_results(drones, base_seed):
 
     mean_loss = np.nanmean(loss_matrix, axis=0)
     std_loss = np.nanstd(loss_matrix, axis=0)
-    t_vals = np.arange(len(mean_loss)) * CONFIG['physics']['dt']
+    t_vals = np.arange(len(mean_loss)) * cfg['physics']['dt']
 
     ax4.plot(t_vals, mean_loss, color='green', linewidth=2, label='Mean loss')
     ax4.fill_between(t_vals, mean_loss - std_loss, mean_loss + std_loss, color='green', alpha=0.15)
@@ -244,13 +245,17 @@ def plot_results(drones, base_seed):
 
 def main():
     parser = argparse.ArgumentParser(description="Run MixedOptimizer and plot trajectories")
+    parser.add_argument("--config", type=str, default="configs/simulation/default.json",
+                        help="Path to simulation JSON config (default: configs/simulation/default.json)")
     parser.add_argument("--runs", type=int, default=1, help="Number of runs (default: 1)")
     parser.add_argument("--seed", type=int, default=0, help="Base random seed (default: 0)")
     args = parser.parse_args()
 
+    cfg = load_configs(args.config)
+
     drones = []
     for i in range(args.runs):
-        drone = run_one(args.seed + i)
+        drone = run_one(args.seed + i, cfg)
         drones.append(drone)
         print(f"run {args.seed + i}: "
               f"dist={np.linalg.norm(drone.position - drone.target_position):.2f} "
@@ -258,7 +263,7 @@ def main():
               f"coll={drone.get_collision_count()} "
               f"time={drone.time:.2f}")
 
-    plot_results(drones, args.seed)
+    plot_results(drones, args.seed, cfg)
 
 
 if __name__ == "__main__":
