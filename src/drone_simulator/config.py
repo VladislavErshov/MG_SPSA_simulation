@@ -51,19 +51,3 @@ def load_configs(simulation_json: str = "configs/simulation/default.json") -> Di
 
 # Default global config loaded from JSON
 CONFIG = load_configs()
-
-# Optimizer mapping
-OPTIMIZER_TYPES = {
-    "spsa": "TargetFollowingSPSA",
-    "gd": "TargetFollowingGD",
-}
-
-# Type hints for clarity
-PhysicsConfig = Dict[str, float]
-SimulationConfig = Dict[str, float]
-OptimizerConfig = Dict[str, float]
-
-
-def get_config(section: str) -> Dict:
-    """Get configuration section by name"""
-    return CONFIG.get(section, {})

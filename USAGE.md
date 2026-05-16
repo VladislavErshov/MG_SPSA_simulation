@@ -6,37 +6,27 @@
 pip install -r requirements.txt
 ```
 
-## Quick start — single run
+## Run
 
 ```bash
-python examples/run_spsa.py
-```
-
-## Multiple runs with plot
-
-```bash
-python examples/run_and_plot.py --runs 10 --seed 0
+python examples/run_and_plot.py                     # single run, default config
+python examples/run_and_plot.py --runs 10 --seed 0  # 10 runs
+python examples/run_and_plot.py --config configs/simulation/grid.json --runs 10
 ```
 
 Saves trajectory image to `results/mixed_optimizer_runs.png`.
 
-## Run tests
-
-```bash
-python -m pytest tests/
-```
-
 ## Configuration
 
-All parameters are in `src/drone_simulator/config.py`.
+All parameters are in JSON files under `configs/`:
 
-Key sections:
-- `mixed_optimizer`:
+- `configs/simulation/*.json` — physics, obstacles, wind, target, simulation duration
+- `configs/spsa/default.json` — MixedOptimizer hyper-parameters:
   - `a` — step-size amplitude
   - `burn_in` — offset for `alpha_n = a/(n+burn_in)` (0 = pure article theory)
   - `c` — perturbation amplitude
   - `num_perturbations` — N probes per SPSA block
-- `wind` — constant external force vector `[vx, vy]` (m/s)
+- `configs/gd/default.json` — unused (reserved for future comparison)
 
 ## Architecture
 
@@ -44,5 +34,5 @@ Key sections:
 - `TargetFollowingSPSA` — drone specialization with 3 blocks:
   1. `speed` — analytical exact gradient
   2. `direction` — one-measurement SPSA (`q=1`, `gamma=1/4`)
-  3. `wind_estimate` — one-measurement SPSA (`q=1`, `gamma=1/4`)
+  3. `wind_estimate` — analytical exact gradient
 - `Drone` — physics with inertia `V_{t+1} = V_t + alpha*(V_cmd - V_t)`, wind drift, and collision handling.
