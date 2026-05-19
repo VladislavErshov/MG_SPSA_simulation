@@ -87,9 +87,12 @@ class BaseOptimizer(ABC):
         """Get current direction command in radians"""
         return self.theta[1] if len(self.theta) > 1 else 0.0
 
-    def get_wind_estimate(self) -> float:
-        """Get current wind estimate"""
-        return self.theta[2] if len(self.theta) > 2 else 0.0
+    def set_parameters(self, speed: Optional[float] = None, direction: Optional[float] = None):
+        """Manually set parameters"""
+        if speed is not None:
+            self.theta[0] = np.clip(speed, self.config.speed_min, self.config.speed_max)
+        if direction is not None and len(self.theta) > 1:
+            self.theta[1] = direction
 
     def get_velocity_command(self) -> np.ndarray:
         """Get current velocity command as [vx, vy] vector"""
@@ -99,13 +102,6 @@ class BaseOptimizer(ABC):
             speed * np.cos(direction),
             speed * np.sin(direction)
         ])
-
-    def set_parameters(self, speed: Optional[float] = None, direction: Optional[float] = None):
-        """Manually set parameters"""
-        if speed is not None:
-            self.theta[0] = np.clip(speed, self.config.speed_min, self.config.speed_max)
-        if direction is not None and len(self.theta) > 1:
-            self.theta[1] = direction
 
     def _rate_limit_direction(self, theta: np.ndarray) -> np.ndarray:
         """Limit direction change per step to avoid sharp turns"""
@@ -161,80 +157,3 @@ class BaseOptimizer(ABC):
         """Execute step with updated state"""
         self.update_state(position, target, obstacles)
         return self.step(**loss_kwargs)
-
-    def get_history(self) -> dict:
-        """Get optimization history"""
-        return self.history.copy()
-
-
-# MPC Interface (future extension)
-# =================================
-
-class MPCConfig(OptimizerConfig):
-    """Configuration for Model Predictive Control"""
-    horizon_length: int = 10  # N steps ahead
-    terminal_cost_weight: float = 1.0
-
-
-class MPCOptimizer(BaseOptimizer):
-    """
-    Model Predictive Control optimizer.
-
-    Optimizes a sequence of velocity commands [V_cmd_t, ..., V_cmd_{t+N}]
-    over a prediction horizon.
-
-    CURRENTLY INACTIVE - This is a placeholder for future implementation.
-    """
-
-    def __init__(self, config: MPCConfig, loss_function: Callable):
-        super().__init__(config, loss_function)
-        self.horizon_length = config.horizon_length
-
-        # MPC optimizes a sequence of controls
-        # Parameters: [speed_0, direction_0, speed_1, direction_1, ..., speed_N, direction_N]
-        self.param_dim = 2 * self.horizon_length
-
-        # Initialize with constant speed profile
-        self.theta = np.zeros(self.param_dim)
-        base_speed = (config.speed_max + config.speed_min) / 2
-        for i in range(self.horizon_length):
-            self.theta[2 * i] = base_speed  # speed
-            self.theta[2 * i + 1] = 0.0  # direction (straight)
-
-    def step(self, **loss_kwargs) -> Tuple[np.ndarray, float, np.ndarray]:
-        """
-        Placeholder for MPC optimization.
-
-        TODO: Implement full MPC with:
-        - Prediction model for drone dynamics
-        - Cost function over entire horizon
-        - Constraint handling
-        - Warm-starting with previous solution
-        """
-        # For now, just return a simple solution
-        self.iteration += 1
-
-        # This is a stub - in practice would solve optimal control problem
-        gradient = np.zeros_like(self.theta)
-        loss = self.loss_function(self.theta, **loss_kwargs)
-
-        # Store only first control action as current command
-        current_params = self.theta[:2]  # [speed_0, direction_0]
-
-        self.history['parameters'].append(current_params.copy())
-        self.history['loss'].append(loss)
-        self.history['gradients'].append(gradient.copy())
-
-        return current_params.copy(), loss, gradient.copy()
-
-    def get_velocity_sequence(self) -> List[np.ndarray]:
-        """Get full sequence of velocity commands over horizon"""
-        commands = []
-        for i in range(self.horizon_length):
-            speed = self.theta[2 * i]
-            direction = self.theta[2 * i + 1]
-            commands.append(np.array([
-                speed * np.cos(direction),
-                speed * np.sin(direction)
-            ]))
-        return commands
