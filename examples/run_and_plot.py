@@ -143,10 +143,10 @@ def plot_results(drones, base_seed, cfg: dict):
     tolerance = cfg['metrics']['target_tolerance']
     dt = cfg['physics']['dt']
 
-    fig, axes = plt.subplots(2, 2, figsize=(16, 12))
+    fig, axes = plt.subplots(2, 2, figsize=(11, 8.25))
     fig.suptitle(
         f"Mixed-Gradient SPSA — Simulation Results (N={len(drones)} runs)",
-        fontsize=16,
+        fontsize=14,
         fontweight='bold',
     )
 
@@ -169,11 +169,6 @@ def plot_results(drones, base_seed, cfg: dict):
 
     # ---- [0,0] Representative Trajectories ----
     ax = axes[0, 0]
-    # faint background of all runs
-    for drone in drones:
-        traj = drone.get_trajectory()
-        ax.plot(traj[:, 0], traj[:, 1], color='grey', alpha=0.12, linewidth=0.8)
-
     # pick best / median / worst by final distance
     sorted_idx = np.argsort([s['dist'] for s in stats])
     rep_indices = [sorted_idx[0], sorted_idx[len(sorted_idx) // 2], sorted_idx[-1]]
@@ -183,75 +178,63 @@ def plot_results(drones, base_seed, cfg: dict):
     for idx, label, color in zip(rep_indices, rep_labels, rep_colors):
         drone = drones[idx]
         traj = drone.get_trajectory()
-        ax.plot(traj[:, 0], traj[:, 1], color=color, linewidth=2.0,
-                label=f"{label} (run {base_seed + idx}, d={stats[idx]['dist']:.2f}m)")
-        ax.scatter(traj[0, 0], traj[0, 1], color=color, marker='o', s=40, zorder=5)
+        ax.plot(traj[:, 0], traj[:, 1], color=color, linewidth=1.5,
+                label=label, zorder=3)
+        ax.scatter(traj[0, 0], traj[0, 1], color=color, marker='o', s=30,
+                   zorder=4, edgecolors='white', linewidths=0.5)
 
-    ax.scatter(target[0], target[1], color='red', marker='*', s=250,
-               label='Target', zorder=5)
-    ax.scatter(start[0], start[1], color='green', marker='s', s=120,
-               label='Start', zorder=5)
+    ax.scatter(target[0], target[1], color='red', marker='*', s=200,
+               label='Target', zorder=4, edgecolors='white', linewidths=0.5)
+    ax.scatter(start[0], start[1], color='green', marker='s', s=80,
+               label='Start', zorder=4, edgecolors='white', linewidths=0.5)
 
     for obs in obstacles:
-        draw_obstacle(ax, obs, alpha=0.2)
+        draw_obstacle(ax, obs, alpha=0.15)
 
     wind = np.array([cfg['wind']['vx'], cfg['wind']['vy']])
     if np.linalg.norm(wind) > 1e-6:
-        ax.annotate(
-            '',
-            xy=start + wind * 2,
-            xytext=start,
-            arrowprops=dict(arrowstyle='->', color='blue', lw=2),
-        )
         ax.text(
-            start[0] + wind[0] * 2.2,
-            start[1] + wind[1] * 2.2,
-            f"wind {np.linalg.norm(wind):.1f} m/s",
+            0.02, 0.98,
+            f"Wind: {np.linalg.norm(wind):.1f} m/s",
+            transform=ax.transAxes,
             color='blue',
             fontsize=9,
+            verticalalignment='top',
+            bbox=dict(boxstyle='round', facecolor='lightblue', alpha=0.3),
         )
 
     ax.set_xlabel("X (m)")
     ax.set_ylabel("Y (m)")
     ax.set_title("Representative Trajectories")
-    ax.legend(loc='upper left', fontsize=9)
+    ax.legend(loc='upper left', fontsize=8)
     ax.grid(True, alpha=0.3)
     ax.axis("equal")
 
     # ---- [0,1] Performance Metrics ----
     ax2 = axes[0, 1]
-    metrics_names = [
-        'Success Rate (%)',
-        'Avg Time to Target (s)',
-        'Avg Collisions',
-        'Avg Trajectory Length (m)',
-    ]
-    metrics_vals = [
-        ok_count / len(stats) * 100.0,
-        np.mean([s['time'] for s in ok_stats]) if ok_stats else 0.0,
-        np.mean([s['coll'] for s in stats]),
-        np.mean([s['traj'] for s in ok_stats]) if ok_stats else 0.0,
-    ]
-    metrics_errs = [
-        0.0,
-        np.std([s['time'] for s in ok_stats]) if len(ok_stats) > 1 else 0.0,
-        np.std([s['coll'] for s in stats]) if len(stats) > 1 else 0.0,
-        np.std([s['traj'] for s in ok_stats]) if len(ok_stats) > 1 else 0.0,
-    ]
+    ax2.axis('off')
+    ax2.set_title("Performance Metrics", fontsize=12, fontweight='bold', pad=10)
 
-    y_pos = np.arange(len(metrics_names))
-    bars = ax2.barh(y_pos, metrics_vals, xerr=metrics_errs, color='steelblue',
-                    alpha=0.8, capsize=4)
-    ax2.set_yticks(y_pos)
-    ax2.set_yticklabels(metrics_names)
-    ax2.set_xlabel("Value")
-    ax2.set_title("Performance Metrics")
-    ax2.grid(True, alpha=0.3, axis='x')
+    time_mean = np.mean([s['time'] for s in ok_stats]) if ok_stats else 0.0
+    time_std = np.std([s['time'] for s in ok_stats]) if len(ok_stats) > 1 else 0.0
+    coll_mean = np.mean([s['coll'] for s in stats])
+    coll_std = np.std([s['coll'] for s in stats]) if len(stats) > 1 else 0.0
+    traj_mean = np.mean([s['traj'] for s in ok_stats]) if ok_stats else 0.0
+    traj_std = np.std([s['traj'] for s in ok_stats]) if len(ok_stats) > 1 else 0.0
 
-    for bar, val in zip(bars, metrics_vals):
-        ax2.text(bar.get_width() + bar.get_width() * 0.02,
-                 bar.get_y() + bar.get_height() / 2,
-                 f"{val:.1f}", va='center', fontsize=10, fontweight='bold')
+    scoreboard = (
+        f"Success Rate:        {ok_count / len(stats) * 100:.1f}%\n"
+        f"Avg Time to Target:  {time_mean:.1f} ± {time_std:.1f} s\n"
+        f"Avg Collisions:      {coll_mean:.1f} ± {coll_std:.1f}\n"
+        f"Avg Trajectory:      {traj_mean:.1f} ± {traj_std:.1f} m"
+    )
+    ax2.text(
+        0.5, 0.5, scoreboard,
+        transform=ax2.transAxes,
+        fontsize=10, fontfamily='monospace',
+        verticalalignment='center', horizontalalignment='center',
+        bbox=dict(boxstyle='round', facecolor='whitesmoke', alpha=0.8),
+    )
 
     # ---- [1,0] Distance to Target vs Time ----
     ax3 = axes[1, 0]
@@ -263,9 +246,6 @@ def plot_results(drones, base_seed, cfg: dict):
         dist_matrix[i, :len(dists)] = dists
 
     t_vals = np.arange(max_len) * dt
-    for i in range(len(drones)):
-        ax3.plot(t_vals, dist_matrix[i], color='grey', alpha=0.2, linewidth=0.8)
-
     mean_dist = np.nanmean(dist_matrix, axis=0)
     std_dist = np.nanstd(dist_matrix, axis=0)
     ax3.plot(t_vals, mean_dist, color='darkblue', linewidth=2.5, label='Mean distance')
@@ -277,11 +257,11 @@ def plot_results(drones, base_seed, cfg: dict):
     ax3.set_xlabel("Time (s)")
     ax3.set_ylabel("Distance to Target (m)")
     ax3.set_title("Physical Convergence (Distance to Target)")
-    ax3.legend(fontsize=9)
+    ax3.legend(fontsize=8)
     ax3.grid(True, alpha=0.3)
 
     ax3.text(0.98, 0.95, f"{ok_count}/{len(stats)} runs reached target",
-             transform=ax3.transAxes, fontsize=11, verticalalignment='top',
+             transform=ax3.transAxes, fontsize=10, verticalalignment='top',
              horizontalalignment='right',
              bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
 
@@ -294,12 +274,8 @@ def plot_results(drones, base_seed, cfg: dict):
 
     ax4.loglog(n_vals, mean_err, color='blue', linewidth=2,
                label='Mean total error')
-    ax4.fill_between(n_vals, mean_err - std_err, mean_err + std_err,
-                     color='blue', alpha=0.12)
     ax4.loglog(n_vals, mean_err_dir, color='darkorange', linewidth=2,
                label='Mean direction error (SPSA block)')
-    ax4.fill_between(n_vals, mean_err_dir - std_err_dir, mean_err_dir + std_err_dir,
-                     color='darkorange', alpha=0.12)
 
     ref_05 = mean_err[0] * (n_vals[0] ** 0.5) * (n_vals ** (-0.5))
     ref_10 = mean_err[0] * n_vals[0] * (n_vals ** (-1.0))
@@ -311,7 +287,7 @@ def plot_results(drones, base_seed, cfg: dict):
     ax4.set_xlabel("Iteration n")
     ax4.set_ylabel(r"$\mathbb{E}\|\theta_n - \theta^*\|^2$")
     ax4.set_title("Convergence Verification — Synthetic Quadratic")
-    ax4.legend(fontsize=8)
+    ax4.legend(fontsize=7)
     ax4.grid(True, alpha=0.3, which='both')
 
     # Annotation box with regression results
@@ -321,7 +297,7 @@ def plot_results(drones, base_seed, cfg: dict):
         f"  Direction err slope = {slope_dir:.3f}  R² = {r2_dir:.3f}\n"
         f"  Theory bound (q=1)  ≤ −0.500"
     )
-    ax4.text(0.05, 0.35, annot_text, transform=ax4.transAxes, fontsize=10,
+    ax4.text(0.05, 0.35, annot_text, transform=ax4.transAxes, fontsize=9,
              verticalalignment='top', fontfamily='monospace',
              bbox=dict(boxstyle='round', facecolor='lightyellow', alpha=0.8))
 
