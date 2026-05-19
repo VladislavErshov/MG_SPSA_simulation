@@ -1,3 +1,3 @@
-from .drone import Drone, DroneConfig
+from .drone import Drone
 
-__all__ = ["Drone", "DroneConfig"]
+__all__ = ["Drone"]

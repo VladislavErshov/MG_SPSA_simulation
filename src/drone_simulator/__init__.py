@@ -1,26 +1,15 @@
 """
-Mixed-Gradient SPSA Drone Simulator
+Maneuver-learning drone simulator.
 
-A 2D drone simulator with inertia and trajectory optimization using
-the Mixed-Gradient SPSA framework from the article.
+A 2D drone simulator with constant speed, blind obstacles,
+and learnable maneuver parameters (d_back, omega_turn, alpha_evade).
 """
 
-from .core import (
-    Drone,
-    DroneConfig,
-)
-from .optimizers import (
-    MixedOptimizer,
-    MixedOptimizerConfig,
-    BlockConfig,
-    TargetFollowingSPSA,
-)
+from .core import Drone
+from .optimizers import ManeuverOptimizer, ManeuverOptimizerConfig
 
 __all__ = [
     "Drone",
-    "DroneConfig",
-    "MixedOptimizer",
-    "MixedOptimizerConfig",
-    "BlockConfig",
-    "TargetFollowingSPSA",
+    "ManeuverOptimizer",
+    "ManeuverOptimizerConfig",
 ]
