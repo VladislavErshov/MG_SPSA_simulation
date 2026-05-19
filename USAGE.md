@@ -9,30 +9,40 @@ pip install -r requirements.txt
 ## Run
 
 ```bash
-python examples/run_and_plot.py                     # single run, default config
-python examples/run_and_plot.py --runs 10 --seed 0  # 10 runs
-python examples/run_and_plot.py --config configs/simulation/grid.json --runs 10
+python examples/run_and_plot.py --mode spsa1 --iterations 30
+python examples/run_and_plot.py --mode spsa2 --iterations 30 --seed 42
+python examples/run_and_plot.py --config configs/simulation/grid.json --mode spsa2 --iterations 30
 ```
 
-Saves trajectory image to `results/mixed_optimizer_runs.png`.
+Saves results to `results/maneuver_learning.png`.
 
-## Configuration
+## Scenario Configuration
 
-All parameters are in JSON files under `configs/`:
+Scenario parameters are in JSON files under `configs/simulation/`:
 
-- `configs/simulation/*.json` — physics, obstacles, wind, target, simulation duration
-- `configs/spsa/default.json` — MixedOptimizer hyper-parameters:
-  - `a` — step-size amplitude
-  - `burn_in` — offset for `alpha_n = a/(n+burn_in)` (0 = pure article theory)
-  - `c` — perturbation amplitude
-  - `num_perturbations` — N probes per SPSA block
-- `configs/gd/default.json` — unused (reserved for future comparison)
+- `start` — initial position `[x, y]`
+- `target` — target position `[x, y]`
+- `obstacles` — list of `[x, y, radius]` or `[x, y, radius, "star6"]`
+- `speed` — constant flight speed (m/s)
+- `dt` — simulation time step (s)
+- `max_duration` — episode timeout (s)
+- `target_tolerance` — distance to target considered "reached" (m)
+
+Available scenarios:
+- `configs/simulation/default.json` — scattered circular obstacles
+- `configs/simulation/grid.json` — grid of circular obstacles
+- `configs/simulation/grid_no_wind.json` — grid without wind
+- `configs/simulation/grid_stars.json` — grid of star-shaped obstacles
 
 ## Architecture
 
-- `MixedOptimizer` — modular mixed-gradient optimizer. Each parameter block can use `exact` gradient or `spsa_off_center` / `spsa_centered`.
-- `TargetFollowingSPSA` — drone specialization with 3 blocks:
-  1. `speed` — analytical exact gradient
-  2. `direction` — one-measurement SPSA (`q=1`, `gamma=1/4`)
-  3. `wind_estimate` — analytical exact gradient
-- `Drone` — physics with inertia `V_{t+1} = V_t + alpha*(V_cmd - V_t)`, wind drift, and collision handling.
+- `Drone` — 2D drone with fixed speed and no inertia.
+  - Flies straight toward target until collision.
+  - On collision: backtracks `d_back` meters, turns by `alpha_evade`, then gradually turns back toward target with rate `omega_turn`.
+  - `fly_episode(params)` runs one complete flight and returns `time`, `trajectory`, `n_collisions`, `reached`.
+- `ManeuverOptimizer` — mixed-gradient optimizer for `[d_back, omega_turn, alpha_evade]`.
+  - `d_back` and `omega_turn` — exact gradient via central finite difference.
+  - `alpha_evade` — SPSA block:
+    - `spsa1` — one-measurement (off-center)
+    - `spsa2` — two-measurement (centered)
+  - `evaluate(mode, run_fn)` performs one iteration: computes gradient, updates parameters, clips to bounds, logs history.
