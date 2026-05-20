@@ -6,7 +6,8 @@ On collision: backtrack along saved trajectory, evade by alpha_evade,
 then gradually turn back toward target with omega_turn.
 """
 
-from typing import List
+from typing import List, Union
+
 import numpy as np
 
 
@@ -29,8 +30,8 @@ class Drone:
 
     def __init__(
         self,
-        start_pos,
-        target_pos,
+        start_pos: Union[list, np.ndarray],
+        target_pos: Union[list, np.ndarray],
         obstacles: List,
         speed: float = 5.0,
         dt: float = 0.05,
@@ -38,7 +39,7 @@ class Drone:
     ):
         self.start_pos = np.array(start_pos, dtype=float)
         self.target_pos = np.array(target_pos, dtype=float)
-        self.obstacles = [list(o) for o in obstacles]
+        self.obstacles: list[list] = [list(o) for o in obstacles]
         self.speed = speed
         self.dt = dt
         self.max_duration = max_duration
@@ -102,7 +103,7 @@ class Drone:
                     direction = np.arctan2(
                         target_pt[1] - pos[1], target_pt[0] - pos[0]
                     )
-                    step_vec = self._step_forward(pos, direction, return_vec=True)
+                    step_vec = self._step_vec(direction)
                     if np.linalg.norm(target_pt - pos) <= np.linalg.norm(step_vec):
                         pos = target_pt.copy()
                         backtrack_idx += 1
@@ -313,18 +314,12 @@ class Drone:
             self.target_pos[0] - pos[0],
         )
 
-    def _step_forward(
-        self, pos: np.ndarray, direction: float, return_vec: bool = False
-    ):
-        vec = self.speed * self.dt * np.array([np.cos(direction), np.sin(direction)])
-        if return_vec:
-            return vec
-        return pos + vec
+    def _step_forward(self, pos: np.ndarray, direction: float) -> np.ndarray:
+        return pos + self._step_vec(direction)
+
+    def _step_vec(self, direction: float) -> np.ndarray:
+        return self.speed * self.dt * np.array([np.cos(direction), np.sin(direction)])
 
     @staticmethod
     def _normalize_angle(angle: float) -> float:
-        while angle > np.pi:
-            angle -= 2 * np.pi
-        while angle < -np.pi:
-            angle += 2 * np.pi
-        return angle
+        return (angle + np.pi) % (2 * np.pi) - np.pi

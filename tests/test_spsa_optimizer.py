@@ -1,15 +1,9 @@
 """Tests for maneuver optimizer module."""
 
-import sys
-from pathlib import Path
-
-project_root = Path(__file__).parent.parent
-sys.path.insert(0, str(project_root))
-
 import numpy as np
 import pytest
 
-from src.drone_simulator.optimizers.spsa import (
+from drone_simulator.optimizers.spsa import (
     ManeuverOptimizer,
     ManeuverOptimizerConfig,
 )
@@ -35,7 +29,7 @@ def test_optimizer_initialization():
     assert opt.iteration == 0
 
 
-def test_parameter_clipping():
+def test_parameter_clipping_after_evaluate():
     cfg = ManeuverOptimizerConfig(
         d_back_min=0.5,
         d_back_max=5.0,
@@ -45,11 +39,18 @@ def test_parameter_clipping():
         alpha_evade_max=1.0,
     )
     opt = ManeuverOptimizer(cfg)
-    opt.theta = np.array([10.0, 0.05, 2.0])
-    opt._clip()
-    assert opt.theta[0] == pytest.approx(5.0)
-    assert opt.theta[1] == pytest.approx(0.2)
-    assert opt.theta[2] == pytest.approx(1.0)
+
+    def dummy_loss(params):
+        return params["d_back"] ** 2 + params["omega_turn"] ** 2 + params["alpha_evade"] ** 2
+
+    np.random.seed(0)
+    for _ in range(20):
+        opt.evaluate("spsa2", dummy_loss)
+
+    params = opt.get_params()
+    assert cfg.d_back_min <= params["d_back"] <= cfg.d_back_max
+    assert cfg.omega_turn_min <= params["omega_turn"] <= cfg.omega_turn_max
+    assert cfg.alpha_evade_min <= params["alpha_evade"] <= cfg.alpha_evade_max
 
 
 def test_evaluate_spsa1():

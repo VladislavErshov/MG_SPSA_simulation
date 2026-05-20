@@ -77,10 +77,11 @@ def train(mode: str, scenario: dict, n_iterations: int, seed: int = 0):
     max_dur = scenario.get("max_duration", 100.0)
 
     losses = []
+    def loss_fn(theta_dict: dict) -> float:
+        result = run_episode(theta_dict, arena)
+        return compute_loss(result, max_dur)
+
     for i in range(n_iterations):
-        def loss_fn(theta_dict):
-            result = run_episode(theta_dict, arena)
-            return compute_loss(result, max_dur)
 
         grad = optimizer.evaluate(mode, loss_fn)
         params = optimizer.get_params()
@@ -107,7 +108,7 @@ def _fly_and_measure(params: dict, scenario: dict) -> dict:
     return result
 
 
-def plot_results(optimizer: ManeuverOptimizer, losses: list, mode: str, scenario: dict):
+def plot_results(optimizer: ManeuverOptimizer, losses: list, mode: str, scenario: dict, config_path: str = "default"):
     fig, axes = plt.subplots(2, 2, figsize=(11, 8.25))
     fig.suptitle(f"Обучение манёвра — режим {mode}", fontsize=14, fontweight="bold")
 
@@ -217,7 +218,8 @@ def plot_results(optimizer: ManeuverOptimizer, losses: list, mode: str, scenario
     )
 
     plt.tight_layout()
-    out_path = Path("results/maneuver_learning.png")
+    cfg_name = Path(config_path).stem
+    out_path = Path(f"results/maneuver_learning_{cfg_name}.png")
     out_path.parent.mkdir(exist_ok=True)
     plt.savefig(out_path, dpi=300, bbox_inches="tight")
     print(f"Saved: {out_path}")
@@ -251,7 +253,7 @@ def main():
     print(f"Config: {args.config}")
     print(f"Mode: {args.mode}, Iterations: {args.iterations}, Seed: {args.seed}")
     optimizer, losses = train(args.mode, scenario, args.iterations, args.seed)
-    plot_results(optimizer, losses, args.mode, scenario)
+    plot_results(optimizer, losses, args.mode, scenario, args.config)
 
 
 if __name__ == "__main__":

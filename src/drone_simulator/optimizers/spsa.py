@@ -13,7 +13,6 @@ from typing import Callable, Dict
 
 import numpy as np
 
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
@@ -56,7 +55,7 @@ class ManeuverOptimizer:
             ]
         )
         self.iteration = 0
-        self.history: list = []
+        self.history: list[dict] = []
 
     # ------------------------------------------------------------------
     # Public API
@@ -148,13 +147,6 @@ class ManeuverOptimizer:
         t = self.theta.copy()
         t[coord] += delta
         return t
-
-    def _forward_fd(
-        self, run_fn: Callable[[Dict], float], eps: float, coord: int
-    ) -> float:
-        loss_plus = run_fn(self._to_dict(self._perturb_theta(coord, eps)))
-        loss_base = run_fn(self._to_dict(self.theta))
-        return (loss_plus - loss_base) / eps
 
     def _central_fd(
         self, run_fn: Callable[[Dict], float], eps: float, coord: int
