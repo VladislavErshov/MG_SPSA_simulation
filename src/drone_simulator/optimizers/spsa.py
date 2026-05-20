@@ -20,18 +20,19 @@ logger = logging.getLogger(__name__)
 class ManeuverOptimizerConfig:
     """Configuration for maneuver-parameter optimizer."""
 
-    a: float = 1.0  # step-size amplitude
+    a: float = 5.0  # step-size amplitude
     c: float = 1.0  # perturbation amplitude
+    A: float = 5.0  # stability constant for step-size decay
     burn_in: int = 0
     epsilon_exact: float = 0.25  # FD step for exact blocks
 
     # Parameter bounds
-    d_back_min: float = 1.0
-    d_back_max: float = 10.0
-    omega_turn_min: float = 0.1
-    omega_turn_max: float = 5.0
-    alpha_evade_min: float = -np.pi
-    alpha_evade_max: float = np.pi
+    d_back_min: float = 0.5
+    d_back_max: float = 20.0
+    omega_turn_min: float = 0.05
+    omega_turn_max: float = 10.0
+    alpha_evade_min: float = -2 * np.pi
+    alpha_evade_max: float = 2 * np.pi
 
     # SPSA smoothing
     n_spsa_samples: int = 3
@@ -111,8 +112,10 @@ class ManeuverOptimizer:
 
         grad = np.array([grad_0, grad_1, grad_2])
 
-        # Soft clipping: keep small gradients intact, cap large ones to [-1, 1]
-        grad = grad / np.maximum(np.abs(grad), 1.0)
+        # Normalize by component-wise max to keep relative magnitudes but cap scale
+        max_abs = np.max(np.abs(grad))
+        if max_abs > 0:
+            grad = grad / max_abs
 
         # --- update -------------------------------------------------
         self.theta = self.theta - alpha_n * grad
@@ -130,14 +133,17 @@ class ManeuverOptimizer:
         return grad
 
     def get_params(self) -> Dict:
-        return self._to_dict(self.theta)
+        if not self.history:
+            return self._to_dict(self.theta)
+        best = min(self.history, key=lambda h: h["loss"])
+        return self._to_dict(best["theta"])
 
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
     def _step_size(self) -> float:
         n = max(self.iteration, 1) + self.config.burn_in
-        return self.config.a / n
+        return self.config.a / (n + self.config.A) ** 0.602
 
     def _perturbation_size(self) -> float:
         n = max(self.iteration, 1) + self.config.burn_in

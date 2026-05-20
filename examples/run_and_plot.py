@@ -62,7 +62,8 @@ def compute_loss(result: dict, max_duration: float = 100.0) -> float:
         traj_len += float(np.linalg.norm(traj[i] - traj[i - 1]))
     loss = result["time"] + 0.01 * traj_len + 5.0 * result["n_collisions"]
     if not result["reached"]:
-        loss += max_duration
+        dist_to_target = float(np.linalg.norm(traj[-1] - result.get("target_pos", traj[-1])))
+        loss += 2.0 * dist_to_target
     return loss
 
 
@@ -77,6 +78,7 @@ def train(mode: str, scenario: dict, n_iterations: int, seed: int = 0):
     max_dur = scenario.get("max_duration", 100.0)
 
     losses = []
+    trajectories = []
     def loss_fn(theta_dict: dict) -> float:
         result = run_episode(theta_dict, arena)
         return compute_loss(result, max_dur)
@@ -85,8 +87,10 @@ def train(mode: str, scenario: dict, n_iterations: int, seed: int = 0):
 
         grad = optimizer.evaluate(mode, loss_fn)
         params = optimizer.get_params()
-        loss = loss_fn(params)
+        result = run_episode(params, arena)
+        loss = compute_loss(result, max_dur)
         losses.append(loss)
+        trajectories.append(result["trajectory"])
         print(
             f"Iter {i + 1:3d}: loss={loss:7.2f}  "
             f"d_back={params['d_back']:.2f}  "
@@ -95,7 +99,7 @@ def train(mode: str, scenario: dict, n_iterations: int, seed: int = 0):
             f"grad=[{grad[0]:7.2f} {grad[1]:7.2f} {grad[2]:7.2f}]"
         )
 
-    return optimizer, losses
+    return optimizer, losses, trajectories
 
 
 # ------------------------------------------------------------------
@@ -108,11 +112,11 @@ def _fly_and_measure(params: dict, scenario: dict) -> dict:
     return result
 
 
-def plot_results(optimizer: ManeuverOptimizer, losses: list, mode: str, scenario: dict, config_path: str = "default"):
+def plot_results(optimizer: ManeuverOptimizer, losses: list, trajectories: list, mode: str, scenario: dict, config_path: str = "default", show_all: bool = False):
     fig, axes = plt.subplots(2, 2, figsize=(11, 8.25))
     fig.suptitle(f"Обучение манёвра — режим {mode}", fontsize=14, fontweight="bold")
 
-    # --- [0,0] Траектории: baseline vs обученные ------------------
+    # --- [0,0] Траектории: все итерации ----------------------------
     ax = axes[0, 0]
     baseline_cfg = ManeuverOptimizerConfig()
     baseline_params = {
@@ -132,6 +136,14 @@ def plot_results(optimizer: ManeuverOptimizer, losses: list, mode: str, scenario
         label="Baseline",
         zorder=2,
     )
+
+    if show_all:
+        cmap = plt.cm.cool
+        n_traj = len(trajectories)
+        for i, traj in enumerate(trajectories):
+            color = cmap(i / max(n_traj - 1, 1))
+            ax.plot(traj[:, 0], traj[:, 1], color=color, linewidth=0.5, alpha=0.5, zorder=1)
+
     ax.plot(
         trained_res["trajectory"][:, 0],
         trained_res["trajectory"][:, 1],
@@ -157,10 +169,21 @@ def plot_results(optimizer: ManeuverOptimizer, losses: list, mode: str, scenario
 
     ax.set_xlabel("X (m)")
     ax.set_ylabel("Y (m)")
-    ax.set_title("Траектории: baseline vs обученная")
+    ax.set_title("Траектории" + (" (все итерации)" if show_all else ""))
     ax.legend(loc="upper left", fontsize=8)
     ax.grid(True, alpha=0.3)
-    ax.axis("equal")
+    ax.set_aspect("equal")
+    # Axis limits from scenario + baseline & trained trajectories
+    pts = [scenario["start"], scenario["target"]]
+    for obs in scenario["obstacles"]:
+        pts.append([obs[0], obs[1]])
+    for traj in [baseline_res["trajectory"], trained_res["trajectory"]]:
+        for p in traj[::max(1, len(traj) // 50)]:
+            pts.append(p.tolist())
+    pts = np.array(pts)
+    margin = 2.0
+    ax.set_xlim(pts[:, 0].min() - margin, pts[:, 0].max() + margin)
+    ax.set_ylim(pts[:, 1].min() - margin, pts[:, 1].max() + margin)
 
     # --- [0,1] Сходимость параметров ------------------------------
     ax2 = axes[0, 1]
@@ -247,13 +270,17 @@ def main():
         "--seed", type=int, default=0,
         help="Base random seed (default: 0)"
     )
+    parser.add_argument(
+        "--trajectories", type=str, default="best", choices=["best", "all"],
+        help="Показ траекторий: best (только лучшая) или all (все итерации)"
+    )
     args = parser.parse_args()
 
     scenario = load_scenario(args.config)
     print(f"Config: {args.config}")
     print(f"Mode: {args.mode}, Iterations: {args.iterations}, Seed: {args.seed}")
-    optimizer, losses = train(args.mode, scenario, args.iterations, args.seed)
-    plot_results(optimizer, losses, args.mode, scenario, args.config)
+    optimizer, losses, trajectories = train(args.mode, scenario, args.iterations, args.seed)
+    plot_results(optimizer, losses, trajectories, args.mode, scenario, args.config, show_all=args.trajectories == "all")
 
 
 if __name__ == "__main__":

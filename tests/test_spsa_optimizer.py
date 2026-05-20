@@ -11,11 +11,11 @@ from drone_simulator.optimizers.spsa import (
 
 def test_config_defaults():
     cfg = ManeuverOptimizerConfig()
-    assert cfg.a == 1.0
+    assert cfg.a == 5.0
     assert cfg.c == 1.0
     assert cfg.burn_in == 0
     assert cfg.epsilon_exact == 0.25
-    assert cfg.d_back_min == 1.0
+    assert cfg.d_back_min == 0.5
     assert cfg.n_spsa_samples == 3
 
 
@@ -88,14 +88,14 @@ def test_evaluate_spsa2():
 
 
 def test_step_size_theory():
-    cfg = ManeuverOptimizerConfig(a=2.0)
+    cfg = ManeuverOptimizerConfig(a=2.0, A=5.0)
     opt = ManeuverOptimizer(cfg)
 
     opt.iteration = 0
-    assert opt._step_size() == pytest.approx(2.0 / 1)
+    assert opt._step_size() == pytest.approx(2.0 / (1 + 5) ** 0.602)
 
     opt.iteration = 10
-    assert opt._step_size() == pytest.approx(2.0 / 10)
+    assert opt._step_size() == pytest.approx(2.0 / (10 + 5) ** 0.602)
 
 
 def test_perturbation_size_theory():

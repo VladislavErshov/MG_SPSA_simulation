@@ -80,7 +80,7 @@ class Drone:
         collision_direction = None  # direction at moment of collision
 
         max_steps = int(self.max_duration / self.dt)
-        max_collisions = 5
+        max_collisions = 20
 
         for _ in range(max_steps):
             time += self.dt
@@ -145,10 +145,11 @@ class Drone:
                         "trajectory": np.array(trajectory),
                         "n_collisions": n_collisions,
                         "reached": False,
+                        "target_pos": self.target_pos,
                     }
                 phase = 1
                 collision_direction = direction
-                backtrack_points = self._compute_backtrack(trajectory, d_back)
+                backtrack_points = self._compute_backtrack(trajectory, d_back * (1 + 0.5 * n_collisions))
                 backtrack_idx = 0
                 evade_start_pos = None
 
@@ -161,6 +162,7 @@ class Drone:
                     "trajectory": np.array(trajectory),
                     "n_collisions": n_collisions,
                     "reached": True,
+                    "target_pos": self.target_pos,
                 }
 
         return {
@@ -168,6 +170,7 @@ class Drone:
             "trajectory": np.array(trajectory),
             "n_collisions": n_collisions,
             "reached": False,
+            "target_pos": self.target_pos,
         }
 
     # ------------------------------------------------------------------
