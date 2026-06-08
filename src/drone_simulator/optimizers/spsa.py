@@ -26,6 +26,10 @@ class ManeuverOptimizerConfig:
     burn_in: int = 0
     epsilon_exact: float = 0.25  # FD step for exact blocks
 
+    step_size_exponent: float = 1.0  # α_n ∝ n^{-p}  (paper: p=1)
+    perturbation_exponent_spsa1: float = 0.25  # β_n ∝ n^{-γ}, q=1 → γ=1/4
+    perturbation_exponent_spsa2: float = 1.0 / 6.0  # centered q=2 → γ=1/6
+
     # Parameter bounds
     d_back_min: float = 0.5
     d_back_max: float = 20.0
@@ -77,7 +81,7 @@ class ManeuverOptimizer:
         """
         self.iteration += 1
         alpha_n = self._step_size()
-        beta_n = self._perturbation_size()
+        beta_n = self._perturbation_size(mode)
         eps = self.config.epsilon_exact
 
         # --- exact blocks (central finite difference) ---------------
@@ -132,8 +136,8 @@ class ManeuverOptimizer:
 
         return grad
 
-    def get_params(self) -> Dict:
-        if not self.history:
+    def get_params(self, use_best: bool = False) -> Dict:
+        if not use_best or not self.history:
             return self._to_dict(self.theta)
         best = min(self.history, key=lambda h: h["loss"])
         return self._to_dict(best["theta"])
@@ -143,11 +147,15 @@ class ManeuverOptimizer:
     # ------------------------------------------------------------------
     def _step_size(self) -> float:
         n = max(self.iteration, 1) + self.config.burn_in
-        return self.config.a / (n + self.config.A) ** 0.602
+        return self.config.a / (n + self.config.A) ** self.config.step_size_exponent
 
-    def _perturbation_size(self) -> float:
+    def _perturbation_size(self, mode: str) -> float:
         n = max(self.iteration, 1) + self.config.burn_in
-        return self.config.c / (n ** 0.25)
+        if mode == "spsa2":
+            gamma = self.config.perturbation_exponent_spsa2
+        else:
+            gamma = self.config.perturbation_exponent_spsa1
+        return self.config.c / (n ** gamma)
 
     def _perturb_theta(self, coord: int, delta: float) -> np.ndarray:
         t = self.theta.copy()

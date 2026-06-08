@@ -35,6 +35,46 @@ def load_scenario(config_path: str) -> dict:
 
 
 # ------------------------------------------------------------------
+# Рандомизация позиций start/target
+# ------------------------------------------------------------------
+def randomize_positions(
+    arena: Drone,
+    scenario: dict,
+    rng: np.random.Generator,
+    max_attempts: int = 200,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Сдвигает start/target, сохраняя дистанцию, без попадания в препятствия."""
+    start_orig = np.array(scenario["start"], dtype=float)
+    target_orig = np.array(scenario["target"], dtype=float)
+    distance = float(np.linalg.norm(target_orig - start_orig))
+    midpoint = (start_orig + target_orig) / 2
+
+    all_x = [obs[0] for obs in scenario["obstacles"]] + [start_orig[0], target_orig[0]]
+    all_y = [obs[1] for obs in scenario["obstacles"]] + [start_orig[1], target_orig[1]]
+    span_x = max(all_x) - min(all_x)
+    span_y = max(all_y) - min(all_y)
+
+    for _ in range(max_attempts):
+        angle = rng.uniform(0, 2 * np.pi)
+        dx = rng.uniform(-span_x * 0.25, span_x * 0.25)
+        dy = rng.uniform(-span_y * 0.25, span_y * 0.25)
+
+        new_mid = midpoint + np.array([dx, dy])
+        direction = np.array([np.cos(angle), np.sin(angle)])
+        new_start = new_mid - (distance / 2) * direction
+        new_target = new_mid + (distance / 2) * direction
+
+        if not arena._check_collision(new_start) and not arena._check_collision(new_target):
+            arena.start_pos = new_start
+            arena.target_pos = new_target
+            return new_start, new_target
+
+    arena.start_pos = start_orig
+    arena.target_pos = target_orig
+    return start_orig, target_orig
+
+
+# ------------------------------------------------------------------
 # Создание арены
 # ------------------------------------------------------------------
 def create_arena(scenario: dict) -> Drone:
@@ -71,7 +111,7 @@ def compute_loss(result: dict, max_duration: float = 100.0) -> float:
 # Обучение
 # ------------------------------------------------------------------
 def train(mode: str, scenario: dict, n_iterations: int, seed: int = 0):
-    np.random.seed(seed)
+    rng = np.random.default_rng(seed)
     arena = create_arena(scenario)
     config = ManeuverOptimizerConfig()
     optimizer = ManeuverOptimizer(config)
@@ -79,18 +119,22 @@ def train(mode: str, scenario: dict, n_iterations: int, seed: int = 0):
 
     losses = []
     trajectories = []
+    traj_meta = []  # (start, target) для каждой траектории
+
     def loss_fn(theta_dict: dict) -> float:
         result = run_episode(theta_dict, arena)
         return compute_loss(result, max_dur)
 
     for i in range(n_iterations):
+        randomize_positions(arena, scenario, rng)
 
         grad = optimizer.evaluate(mode, loss_fn)
-        params = optimizer.get_params()
+        params = optimizer._to_dict(optimizer.theta)
         result = run_episode(params, arena)
         loss = compute_loss(result, max_dur)
         losses.append(loss)
         trajectories.append(result["trajectory"])
+        traj_meta.append((arena.start_pos.copy(), arena.target_pos.copy()))
         print(
             f"Iter {i + 1:3d}: loss={loss:7.2f}  "
             f"d_back={params['d_back']:.2f}  "
@@ -99,7 +143,7 @@ def train(mode: str, scenario: dict, n_iterations: int, seed: int = 0):
             f"grad=[{grad[0]:7.2f} {grad[1]:7.2f} {grad[2]:7.2f}]"
         )
 
-    return optimizer, losses, trajectories
+    return optimizer, losses, trajectories, traj_meta
 
 
 # ------------------------------------------------------------------
@@ -112,47 +156,52 @@ def _fly_and_measure(params: dict, scenario: dict) -> dict:
     return result
 
 
-def plot_results(optimizer: ManeuverOptimizer, losses: list, trajectories: list, mode: str, scenario: dict, config_path: str = "default", show_all: bool = False):
+def plot_results(
+    optimizer: ManeuverOptimizer,
+    losses: list,
+    trajectories: list,
+    traj_meta: list,
+    mode: str,
+    scenario: dict,
+    final_result: dict,
+    baseline_result: dict,
+    config_path: str = "default",
+):
     fig, axes = plt.subplots(2, 2, figsize=(11, 8.25))
     fig.suptitle(f"Обучение манёвра — режим {mode}", fontsize=14, fontweight="bold")
 
-    # --- [0,0] Траектории: все итерации ----------------------------
+    # --- [0,0] Траектории: обучение тонко, финал жирно ----------------
     ax = axes[0, 0]
-    baseline_cfg = ManeuverOptimizerConfig()
-    baseline_params = {
-        "d_back": baseline_cfg.d_back_init,
-        "omega_turn": baseline_cfg.omega_turn_init,
-        "alpha_evade": baseline_cfg.alpha_evade_init,
-    }
-    baseline_res = _fly_and_measure(baseline_params, scenario)
-    trained_res = _fly_and_measure(optimizer.get_params(), scenario)
 
+    # Обучающие траектории — тонкие полупрозрачные
+    cmap = plt.cm.cool
+    n_traj = len(trajectories)
+    for i, traj in enumerate(trajectories):
+        color = cmap(i / max(n_traj - 1, 1))
+        ax.plot(traj[:, 0], traj[:, 1], color=color, linewidth=0.5, alpha=0.4, zorder=1)
+
+    # Неизменяемая политика (baseline) — пунктир
     ax.plot(
-        baseline_res["trajectory"][:, 0],
-        baseline_res["trajectory"][:, 1],
+        baseline_result["trajectory"][:, 0],
+        baseline_result["trajectory"][:, 1],
         color="grey",
         linewidth=1.5,
         linestyle="--",
-        label="Baseline",
+        label="Fixed policy",
         zorder=2,
     )
 
-    if show_all:
-        cmap = plt.cm.cool
-        n_traj = len(trajectories)
-        for i, traj in enumerate(trajectories):
-            color = cmap(i / max(n_traj - 1, 1))
-            ax.plot(traj[:, 0], traj[:, 1], color=color, linewidth=0.5, alpha=0.5, zorder=1)
-
+    # Финальный прогон — жирная линия
     ax.plot(
-        trained_res["trajectory"][:, 0],
-        trained_res["trajectory"][:, 1],
+        final_result["trajectory"][:, 0],
+        final_result["trajectory"][:, 1],
         color="blue",
-        linewidth=2.0,
-        label="Trained",
+        linewidth=3.0,
+        label="Learned policy",
         zorder=3,
     )
 
+    # Маркеры только для финального прогона
     target = np.array(scenario["target"])
     start = np.array(scenario["start"])
     ax.scatter(
@@ -169,16 +218,15 @@ def plot_results(optimizer: ManeuverOptimizer, losses: list, trajectories: list,
 
     ax.set_xlabel("X (m)")
     ax.set_ylabel("Y (m)")
-    ax.set_title("Траектории" + (" (все итерации)" if show_all else ""))
+    ax.set_title("Траектории (обучение — тонкие, финал — жирная)")
     ax.legend(loc="upper left", fontsize=8)
     ax.grid(True, alpha=0.3)
     ax.set_aspect("equal")
-    # Axis limits from scenario + baseline & trained trajectories
     pts = [scenario["start"], scenario["target"]]
     for obs in scenario["obstacles"]:
         pts.append([obs[0], obs[1]])
-    for traj in [baseline_res["trajectory"], trained_res["trajectory"]]:
-        for p in traj[::max(1, len(traj) // 50)]:
+    for res in [baseline_result, final_result]:
+        for p in res["trajectory"][::max(1, len(res["trajectory"]) // 30)]:
             pts.append(p.tolist())
     pts = np.array(pts)
     margin = 2.0
@@ -213,6 +261,8 @@ def plot_results(optimizer: ManeuverOptimizer, losses: list, trajectories: list,
     ax4.axis("off")
     ax4.set_title("Итоговые метрики", fontsize=12, fontweight="bold", pad=10)
 
+    params = optimizer._to_dict(optimizer.theta)
+
     def _fmt(res: dict, label: str) -> str:
         return (
             f"{label}:\n"
@@ -224,13 +274,13 @@ def plot_results(optimizer: ManeuverOptimizer, losses: list, trajectories: list,
 
     scoreboard = (
         f"Режим: {mode}\n"
-        f"Итераций: {len(losses)}\n\n"
+        f"Итераций обучения: {len(losses)}\n\n"
         f"Обученные параметры:\n"
-        f"  d_back     = {optimizer.theta[0]:.2f}\n"
-        f"  omega_turn = {optimizer.theta[1]:.2f}\n"
-        f"  alpha_evade= {optimizer.theta[2]:.3f}\n\n"
-        f"{_fmt(baseline_res, 'Baseline')}\n\n"
-        f"{_fmt(trained_res, 'Trained')}"
+        f"  d_back     = {params['d_back']:.2f}\n"
+        f"  omega_turn = {params['omega_turn']:.2f}\n"
+        f"  alpha_evade= {params['alpha_evade']:.3f}\n\n"
+        f"{_fmt(baseline_result, 'Fixed policy')}\n\n"
+        f"{_fmt(final_result, 'Learned policy')}"
     )
     ax4.text(
         0.5, 0.5, scoreboard,
@@ -270,17 +320,41 @@ def main():
         "--seed", type=int, default=0,
         help="Base random seed (default: 0)"
     )
-    parser.add_argument(
-        "--trajectories", type=str, default="best", choices=["best", "all"],
-        help="Показ траекторий: best (только лучшая) или all (все итерации)"
-    )
     args = parser.parse_args()
 
     scenario = load_scenario(args.config)
     print(f"Config: {args.config}")
     print(f"Mode: {args.mode}, Iterations: {args.iterations}, Seed: {args.seed}")
-    optimizer, losses, trajectories = train(args.mode, scenario, args.iterations, args.seed)
-    plot_results(optimizer, losses, trajectories, args.mode, scenario, args.config, show_all=args.trajectories == "all")
+
+    optimizer, losses, trajectories, traj_meta = train(
+        args.mode, scenario, args.iterations, args.seed
+    )
+
+    # Финальные прогоны на оригинальных позициях конфига
+    baseline_cfg = ManeuverOptimizerConfig()
+    baseline_params = {
+        "d_back": baseline_cfg.d_back_init,
+        "omega_turn": baseline_cfg.omega_turn_init,
+        "alpha_evade": baseline_cfg.alpha_evade_init,
+    }
+    baseline_result = _fly_and_measure(baseline_params, scenario)
+    final_result = _fly_and_measure(optimizer._to_dict(optimizer.theta), scenario)
+    print(
+        f"\nFixed policy:  loss={baseline_result['loss']:.2f}  "
+        f"time={baseline_result['time']:.1f}s  "
+        f"collisions={baseline_result['n_collisions']}"
+    )
+    print(
+        f"Learned policy: loss={final_result['loss']:.2f}  "
+        f"time={final_result['time']:.1f}s  "
+        f"collisions={final_result['n_collisions']}  "
+        f"reached={final_result['reached']}"
+    )
+
+    plot_results(
+        optimizer, losses, trajectories, traj_meta,
+        args.mode, scenario, final_result, baseline_result, args.config,
+    )
 
 
 if __name__ == "__main__":

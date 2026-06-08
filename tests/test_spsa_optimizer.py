@@ -88,14 +88,14 @@ def test_evaluate_spsa2():
 
 
 def test_step_size_theory():
-    cfg = ManeuverOptimizerConfig(a=2.0, A=5.0)
+    cfg = ManeuverOptimizerConfig(a=2.0, A=5.0, step_size_exponent=1.0)
     opt = ManeuverOptimizer(cfg)
 
     opt.iteration = 0
-    assert opt._step_size() == pytest.approx(2.0 / (1 + 5) ** 0.602)
+    assert opt._step_size() == pytest.approx(2.0 / (1 + 5) ** 1.0)
 
     opt.iteration = 10
-    assert opt._step_size() == pytest.approx(2.0 / (10 + 5) ** 0.602)
+    assert opt._step_size() == pytest.approx(2.0 / (10 + 5) ** 1.0)
 
 
 def test_perturbation_size_theory():
@@ -103,12 +103,16 @@ def test_perturbation_size_theory():
     opt = ManeuverOptimizer(cfg)
 
     opt.iteration = 0
-    beta = opt._perturbation_size()
+    beta = opt._perturbation_size("spsa1")
     assert beta == pytest.approx(0.5 / (1 ** 0.25))
 
     opt.iteration = 16
-    beta = opt._perturbation_size()
+    beta = opt._perturbation_size("spsa1")
     assert beta == pytest.approx(0.5 / (16 ** 0.25))
+
+    # centered spsa2 uses gamma = 1/6
+    beta2 = opt._perturbation_size("spsa2")
+    assert beta2 == pytest.approx(0.5 / (16 ** (1.0 / 6.0)))
 
 
 def test_to_dict_and_perturb():

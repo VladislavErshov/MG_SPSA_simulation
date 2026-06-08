@@ -41,6 +41,11 @@ def draw_obstacle(
         ax.add_patch(polygon)
     elif obs_type == "star5":
         _draw_star(ax, x, y, 5, obs[2] * 1.5, obs[2] * 0.6, color, alpha, fill)
+    elif obs_type == "cross":
+        arm, t = obs[2], obs[3]
+        for w, h in [(2 * arm, t), (t, 2 * arm)]:
+            rect = Rectangle((x - w / 2, y - h / 2), w, h, color=color, alpha=alpha, fill=fill)
+            ax.add_patch(rect)
     elif obs_type == "rect":
         w, h = obs[2], obs[3]
         rect = Rectangle((x - w / 2, y - h / 2), w, h, color=color, alpha=alpha, fill=fill)
