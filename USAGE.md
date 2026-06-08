@@ -12,7 +12,7 @@ pip install -e .
 python examples/run_and_plot.py --mode spsa2 --iterations 30
 python examples/run_and_plot.py --mode spsa1 --iterations 30 --seed 42
 python examples/run_and_plot.py --config configs/simulation/corridor_3.json --mode spsa2 --iterations 30
-python examples/run_and_plot.py --config configs/simulation/grid.json --trajectories all --iterations 30
+python examples/run_and_plot.py --config configs/simulation/grid.json --iterations 30 --no-display
 ```
 
 Saves results to `results/maneuver_learning_<config_name>.png`.
@@ -25,7 +25,7 @@ Saves results to `results/maneuver_learning_<config_name>.png`.
 | `--mode` | `spsa2` | SPSA mode: `spsa1` (one-measurement) or `spsa2` (centered) |
 | `--iterations` | `30` | Number of training iterations |
 | `--seed` | `0` | Random seed |
-| `--trajectories` | `best` | Plot mode: `best` (baseline + trained) or `all` (all iterations) |
+| `--no-display` | `False` | Save plot without showing window |
 
 ## Scenario Configuration
 
@@ -33,23 +33,16 @@ Scenario parameters are in JSON files under `configs/simulation/`:
 
 - `start` — initial position `[x, y]`
 - `target` — target position `[x, y]`
-- `obstacles` — list of `[x, y, radius]` (circle), `[x, y, w, h, "rect"]`, or `[x, y, w, h, "diamond"]`
+- `obstacles` — list of obstacles:
+  - `[x, y, radius]` — circle
+  - `[x, y, w, h, "rect"]` — rectangle
+  - `[x, y, w, h, "diamond"]` — diamond
+  - `[x, y, r, "star5"]` — 5-point star
+  - `[x, y, arm, t, "cross"]` — cross
 - `speed` — constant flight speed (m/s)
 - `dt` — simulation time step (s)
 - `max_duration` — episode timeout (s)
 - `target_tolerance` — distance to target considered "reached" (m)
-
-Available scenarios:
-- `default.json` — scattered circular obstacles
-- `single_large.json` — one large circular obstacle
-- `grid.json` — grid of circular obstacles
-- `grid_stars.json` — grid with star-shaped obstacles
-- `rectangles_1.json` — rectangular obstacles
-- `ring.json` — ring-shaped obstacle course
-- `walls.json` — wall obstacles
-- `corridor_1.json` — simple corridor
-- `corridor_2.json` — narrow corridor
-- `corridor_3.json` — diagonal corridor with funnel
 
 ## Architecture
 
@@ -60,8 +53,9 @@ Available scenarios:
 - `ManeuverOptimizer` — mixed-gradient optimizer for `[d_back, omega_turn, alpha_evade]`.
   - `d_back` and `omega_turn` — exact gradient via central finite difference.
   - `alpha_evade` — SPSA block:
-    - `spsa1` — one-measurement (off-center)
-    - `spsa2` — two-measurement (centered)
-  - Step size: `a / (n + A)^0.602` (standard SPSA schedule).
-  - Gradient normalization by component-wise max (preserves relative magnitudes).
-  - `get_params()` returns parameters with the best loss from history.
+    - `spsa1` — one-measurement (off-center, first-order defect)
+    - `spsa2` — two-measurement (centered, second-order defect)
+  - Step size: `a / (n + A)` (Robbins–Monro schedule).
+  - Perturbation: `c / n^{γ}` where `γ = 1/4` for spsa1 and `γ = 1/6` for spsa2.
+  - Gradient normalization by component-wise max.
+  - `get_params()` returns the latest parameters.

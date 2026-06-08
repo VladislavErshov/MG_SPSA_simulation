@@ -1,14 +1,18 @@
-"""
-Simplified drone physics for maneuver-learning task.
+"""Simplified drone physics for maneuver-learning task.
 
 No inertia, no wind, constant speed.
 On collision: backtrack along saved trajectory, evade by alpha_evade,
 then gradually turn back toward target with omega_turn.
 """
 
-from typing import List, Union
+from __future__ import annotations
+
+import math
+from typing import Union
 
 import numpy as np
+
+from .obstacles import Obstacle, Circle, Rect, Diamond, Star, Cross, _star_vertices
 
 
 class Drone:
@@ -19,31 +23,38 @@ class Drone:
     ----------
     start_pos : array-like
     target_pos : array-like
-    obstacles : list of [x, y, radius] or [x, y, w, h, "rect"]
+    obstacles : list of Obstacle
     speed : float
         Constant flight speed (m/s).
     dt : float
         Simulation time step (s).
     max_duration : float
         Episode time-out (s).
+    target_tolerance : float
+        Distance to target considered "reached" (m).
+    max_collisions : int
+        Maximum collisions before episode abort.
     """
 
     def __init__(
         self,
         start_pos: Union[list, np.ndarray],
         target_pos: Union[list, np.ndarray],
-        obstacles: List,
+        obstacles: list[Obstacle],
         speed: float = 5.0,
         dt: float = 0.05,
         max_duration: float = 100.0,
+        target_tolerance: float = 1.0,
+        max_collisions: int = 20,
     ):
         self.start_pos = np.array(start_pos, dtype=float)
         self.target_pos = np.array(target_pos, dtype=float)
-        self.obstacles: list[list] = [list(o) for o in obstacles]
+        self.obstacles = obstacles
         self.speed = speed
         self.dt = dt
         self.max_duration = max_duration
-        self.target_tolerance = 1.0
+        self.target_tolerance = target_tolerance
+        self.max_collisions = max_collisions
 
     # ------------------------------------------------------------------
     # Public API
@@ -58,7 +69,7 @@ class Drone:
 
         Returns
         -------
-        dict with keys 'time', 'trajectory', 'n_collisions', 'reached'
+        dict with keys 'time', 'trajectory', 'n_collisions', 'reached', 'target_pos'
         """
         d_back = float(params["d_back"])
         omega_turn = float(params["omega_turn"])
@@ -77,10 +88,9 @@ class Drone:
         backtrack_points = []
         backtrack_idx = 0
         evade_start_pos = None
-        collision_direction = None  # direction at moment of collision
+        collision_direction = None
 
-        max_steps = int(self.max_duration / self.dt)
-        max_collisions = 20
+        max_steps = math.ceil(self.max_duration / self.dt)
 
         for _ in range(max_steps):
             time += self.dt
@@ -110,7 +120,7 @@ class Drone:
                     else:
                         pos = pos + step_vec
                 else:
-                    # Backtrack finished → evasion turn
+                    # Backtrack finished -> evasion turn
                     phase = 2
                     base_dir = collision_direction if collision_direction is not None else direction
                     direction = base_dir + alpha_evade
@@ -139,7 +149,7 @@ class Drone:
             # --- collision detection (segment) ------------------------
             if phase != 1 and self._check_segment_collision(prev_pos, pos):
                 n_collisions += 1
-                if n_collisions >= max_collisions:
+                if n_collisions >= self.max_collisions:
                     return {
                         "time": time,
                         "trajectory": np.array(trajectory),
@@ -174,15 +184,124 @@ class Drone:
         }
 
     # ------------------------------------------------------------------
-    # Helpers
+    # Collision helpers
     # ------------------------------------------------------------------
-    @staticmethod
-    def _star_vertices(cx: float, cy: float, n: int, outer_r: float, inner_r: float) -> list[np.ndarray]:
-        angles = np.linspace(0, 2 * np.pi, 2 * n, endpoint=False) - np.pi / 2
-        radii = np.tile([outer_r, inner_r], n)
-        xs = cx + radii * np.cos(angles)
-        ys = cy + radii * np.sin(angles)
-        return [np.array([x, y]) for x, y in zip(xs, ys)]
+    def _check_collision(self, pos: np.ndarray) -> bool:
+        x, y = float(pos[0]), float(pos[1])
+        for obs in self.obstacles:
+            if isinstance(obs, Circle):
+                c = np.array([obs.x, obs.y])
+                if np.linalg.norm(pos - c) < obs.radius:
+                    return True
+            elif isinstance(obs, Rect):
+                if abs(x - obs.x) <= obs.width / 2 and abs(y - obs.y) <= obs.height / 2:
+                    return True
+            elif isinstance(obs, Diamond):
+                hw, hh = obs.width / 2, obs.height / 2
+                if abs(x - obs.x) / hw + abs(y - obs.y) / hh <= 1:
+                    return True
+            elif isinstance(obs, Star):
+                vertices = _star_vertices(obs.x, obs.y, 5, obs.radius * 1.5, obs.radius * 0.6)
+                if self._point_in_polygon(pos, vertices):
+                    return True
+            elif isinstance(obs, Cross):
+                if abs(x - obs.x) <= obs.arm and abs(y - obs.y) <= obs.thickness / 2:
+                    return True
+                if abs(x - obs.x) <= obs.thickness / 2 and abs(y - obs.y) <= obs.arm:
+                    return True
+        return False
+
+    def _check_segment_collision(self, a: np.ndarray, b: np.ndarray) -> bool:
+        """Check if segment [a, b] intersects any obstacle."""
+        for obs in self.obstacles:
+            if isinstance(obs, Rect):
+                if self._segment_vs_rect(a, b, obs):
+                    return True
+            elif isinstance(obs, Diamond):
+                if self._segment_vs_diamond(a, b, obs):
+                    return True
+            elif isinstance(obs, Star):
+                vertices = _star_vertices(obs.x, obs.y, 5, obs.radius * 1.5, obs.radius * 0.6)
+                if self._point_in_polygon(a, vertices) or self._point_in_polygon(b, vertices):
+                    return True
+                nv = len(vertices)
+                for i in range(nv):
+                    if self._segments_intersect(a, b, vertices[i], vertices[(i + 1) % nv]):
+                        return True
+            elif isinstance(obs, Cross):
+                if self._segment_vs_cross(a, b, obs):
+                    return True
+            elif isinstance(obs, Circle):
+                if self._segment_vs_circle(a, b, obs):
+                    return True
+        return False
+
+    # --- per-shape segment collision helpers --------------------------
+    def _segment_vs_rect(self, a: np.ndarray, b: np.ndarray, obs: Rect) -> bool:
+        half_w, half_h = obs.width / 2, obs.height / 2
+        cx, cy = obs.x, obs.y
+        if abs(a[0] - cx) <= half_w and abs(a[1] - cy) <= half_h:
+            return True
+        if abs(b[0] - cx) <= half_w and abs(b[1] - cy) <= half_h:
+            return True
+        corners = [
+            np.array([cx - half_w, cy - half_h]),
+            np.array([cx + half_w, cy - half_h]),
+            np.array([cx + half_w, cy + half_h]),
+            np.array([cx - half_w, cy + half_h]),
+        ]
+        for i in range(4):
+            if self._segments_intersect(a, b, corners[i], corners[(i + 1) % 4]):
+                return True
+        return False
+
+    def _segment_vs_diamond(self, a: np.ndarray, b: np.ndarray, obs: Diamond) -> bool:
+        hw, hh = obs.width / 2, obs.height / 2
+        cx, cy = obs.x, obs.y
+        if abs(a[0] - cx) / hw + abs(a[1] - cy) / hh <= 1:
+            return True
+        if abs(b[0] - cx) / hw + abs(b[1] - cy) / hh <= 1:
+            return True
+        corners = [
+            np.array([cx, cy + hh]),
+            np.array([cx + hw, cy]),
+            np.array([cx, cy - hh]),
+            np.array([cx - hw, cy]),
+        ]
+        for i in range(4):
+            if self._segments_intersect(a, b, corners[i], corners[(i + 1) % 4]):
+                return True
+        return False
+
+    def _segment_vs_cross(self, a: np.ndarray, b: np.ndarray, obs: Cross) -> bool:
+        cx, cy = obs.x, obs.y
+        for w, h in [(2 * obs.arm, obs.thickness), (obs.thickness, 2 * obs.arm)]:
+            hw, hh = w / 2, h / 2
+            if abs(a[0] - cx) <= hw and abs(a[1] - cy) <= hh:
+                return True
+            if abs(b[0] - cx) <= hw and abs(b[1] - cy) <= hh:
+                return True
+            corners = [
+                np.array([cx - hw, cy - hh]),
+                np.array([cx + hw, cy - hh]),
+                np.array([cx + hw, cy + hh]),
+                np.array([cx - hw, cy + hh]),
+            ]
+            for i in range(4):
+                if self._segments_intersect(a, b, corners[i], corners[(i + 1) % 4]):
+                    return True
+        return False
+
+    def _segment_vs_circle(self, a: np.ndarray, b: np.ndarray, obs: Circle) -> bool:
+        c = np.array([obs.x, obs.y])
+        r = obs.radius
+        ab = b - a
+        ab_len_sq = float(np.dot(ab, ab))
+        if ab_len_sq < 1e-12:
+            return np.linalg.norm(a - c) < r
+        t = max(0.0, min(1.0, float(np.dot(c - a, ab)) / ab_len_sq))
+        closest = a + t * ab
+        return np.linalg.norm(closest - c) < r
 
     @staticmethod
     def _point_in_polygon(pos: np.ndarray, vertices: list[np.ndarray]) -> bool:
@@ -197,36 +316,6 @@ class Drone:
                 inside = not inside
             j = i
         return inside
-
-    def _check_collision(self, pos: np.ndarray) -> bool:
-        for obs in self.obstacles:
-            obs_type = obs[-1] if isinstance(obs[-1], str) else "circle"
-            if obs_type == "rect":
-                cx, cy, w, h = obs[0], obs[1], obs[2], obs[3]
-                if abs(pos[0] - cx) <= w / 2 and abs(pos[1] - cy) <= h / 2:
-                    return True
-            elif obs_type == "diamond":
-                cx, cy, w, h = obs[0], obs[1], obs[2], obs[3]
-                hw, hh = w / 2, h / 2
-                if abs(pos[0] - cx) / hw + abs(pos[1] - cy) / hh <= 1:
-                    return True
-            elif obs_type == "star5":
-                cx, cy, r = obs[0], obs[1], obs[2]
-                vertices = self._star_vertices(cx, cy, 5, r * 1.5, r * 0.6)
-                if self._point_in_polygon(pos, vertices):
-                    return True
-            elif obs_type == "cross":
-                cx, cy, arm, t = obs[0], obs[1], obs[2], obs[3]
-                if abs(pos[0] - cx) <= arm and abs(pos[1] - cy) <= t / 2:
-                    return True
-                if abs(pos[0] - cx) <= t / 2 and abs(pos[1] - cy) <= arm:
-                    return True
-            else:
-                c = np.array(obs[:2], dtype=float)
-                r = float(obs[2])
-                if np.linalg.norm(pos - c) < r:
-                    return True
-        return False
 
     @staticmethod
     def _orientation(a: np.ndarray, b: np.ndarray, c: np.ndarray) -> int:
@@ -262,91 +351,12 @@ class Drone:
             return True
         return False
 
-    def _check_segment_collision(self, a: np.ndarray, b: np.ndarray) -> bool:
-        """Check if segment [a, b] intersects any obstacle."""
-        for obs in self.obstacles:
-            obs_type = obs[-1] if isinstance(obs[-1], str) else "circle"
-            if obs_type == "rect":
-                cx, cy, w, h = obs[0], obs[1], obs[2], obs[3]
-                half_w, half_h = w / 2, h / 2
-                # Endpoint inside rectangle
-                if abs(a[0] - cx) <= half_w and abs(a[1] - cy) <= half_h:
-                    return True
-                if abs(b[0] - cx) <= half_w and abs(b[1] - cy) <= half_h:
-                    return True
-                # Rectangle edges
-                corners = [
-                    np.array([cx - half_w, cy - half_h]),
-                    np.array([cx + half_w, cy - half_h]),
-                    np.array([cx + half_w, cy + half_h]),
-                    np.array([cx - half_w, cy + half_h]),
-                ]
-                for i in range(4):
-                    if self._segments_intersect(a, b, corners[i], corners[(i + 1) % 4]):
-                        return True
-            elif obs_type == "diamond":
-                cx, cy, w, h = obs[0], obs[1], obs[2], obs[3]
-                hw, hh = w / 2, h / 2
-                # Endpoint inside diamond
-                if abs(a[0] - cx) / hw + abs(a[1] - cy) / hh <= 1:
-                    return True
-                if abs(b[0] - cx) / hw + abs(b[1] - cy) / hh <= 1:
-                    return True
-                # Diamond edges
-                corners = [
-                    np.array([cx, cy + hh]),
-                    np.array([cx + hw, cy]),
-                    np.array([cx, cy - hh]),
-                    np.array([cx - hw, cy]),
-                ]
-                for i in range(4):
-                    if self._segments_intersect(a, b, corners[i], corners[(i + 1) % 4]):
-                        return True
-            elif obs_type == "star5":
-                cx, cy, r = obs[0], obs[1], obs[2]
-                vertices = self._star_vertices(cx, cy, 5, r * 1.5, r * 0.6)
-                if self._point_in_polygon(a, vertices) or self._point_in_polygon(b, vertices):
-                    return True
-                nv = len(vertices)
-                for i in range(nv):
-                    if self._segments_intersect(a, b, vertices[i], vertices[(i + 1) % nv]):
-                        return True
-            elif obs_type == "cross":
-                cx, cy, arm, t = obs[0], obs[1], obs[2], obs[3]
-                # Два прямоугольника: горизонтальный и вертикальный
-                for w, h in [(2 * arm, t), (t, 2 * arm)]:
-                    hw, hh = w / 2, h / 2
-                    if abs(a[0] - cx) <= hw and abs(a[1] - cy) <= hh:
-                        return True
-                    if abs(b[0] - cx) <= hw and abs(b[1] - cy) <= hh:
-                        return True
-                    corners = [
-                        np.array([cx - hw, cy - hh]),
-                        np.array([cx + hw, cy - hh]),
-                        np.array([cx + hw, cy + hh]),
-                        np.array([cx - hw, cy + hh]),
-                    ]
-                    for i in range(4):
-                        if self._segments_intersect(a, b, corners[i], corners[(i + 1) % 4]):
-                            return True
-            else:
-                c = np.array(obs[:2], dtype=float)
-                r = float(obs[2])
-                ab = b - a
-                ab_len_sq = float(np.dot(ab, ab))
-                if ab_len_sq < 1e-12:
-                    if np.linalg.norm(a - c) < r:
-                        return True
-                    continue
-                t = max(0.0, min(1.0, float(np.dot(c - a, ab)) / ab_len_sq))
-                closest = a + t * ab
-                if np.linalg.norm(closest - c) < r:
-                    return True
-        return False
-
+    # ------------------------------------------------------------------
+    # Backtrack helpers
+    # ------------------------------------------------------------------
     def _compute_backtrack(
-        self, trajectory: List[np.ndarray], d_back: float
-    ) -> List[np.ndarray]:
+        self, trajectory: list[np.ndarray], d_back: float
+    ) -> list[np.ndarray]:
         """Return list of points to visit while backtracking d_back metres.
         Points inside obstacles are excluded."""
         traj = np.array(trajectory)
@@ -363,14 +373,17 @@ class Drone:
             idx -= 1
             pt = traj[idx].copy()
             if not self._check_collision(pt):
-                points.insert(0, pt)
+                points.append(pt)
 
         if not points:
-            # Fallback: return the earliest available point
             points = [traj[max(0, idx)].copy()]
 
+        points.reverse()
         return points
 
+    # ------------------------------------------------------------------
+    # Kinematics helpers
+    # ------------------------------------------------------------------
     def _angle_to_target(self, pos: np.ndarray) -> float:
         return np.arctan2(
             self.target_pos[1] - pos[1],

@@ -5,9 +5,9 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "drone-simulator"
 version = "0.1.0"
-description = "2D Drone Simulator with Inertia and SPSA/GD Trajectory Optimization"
+description = "2D Drone Simulator with Mixed-Gradient SPSA Trajectory Optimization"
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 dependencies = [
     "numpy",
     "matplotlib",
@@ -16,7 +16,6 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pytest",
-    "pillow",
 ]
 
 [tool.setuptools.packages.find]
