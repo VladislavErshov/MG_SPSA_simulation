@@ -44,7 +44,34 @@ def compute_loss(result: dict, max_duration: float = 100.0) -> float:
 # ------------------------------------------------------------------
 # Training
 # ------------------------------------------------------------------
-def train(mode: str, scenario: dict, n_iterations: int, seed: int = 0):
+def _average_loss_over_randomizations(
+    params: dict,
+    arena: Drone,
+    scenario: dict,
+    rng: np.random.Generator,
+    n_samples: int,
+    max_dur: float,
+) -> float:
+    """Evaluate loss averaged over n_samples random start/target positions."""
+    if n_samples <= 1:
+        result = run_episode(params, arena)
+        return compute_loss(result, max_dur)
+
+    total_loss = 0.0
+    for _ in range(n_samples):
+        randomize_positions(arena, scenario, rng)
+        result = run_episode(params, arena)
+        total_loss += compute_loss(result, max_dur)
+    return total_loss / n_samples
+
+
+def train(
+    mode: str,
+    scenario: dict,
+    n_iterations: int,
+    seed: int = 0,
+    n_eval_samples: int = 5,
+):
     rng = np.random.default_rng(seed)
     np.random.seed(seed)
     arena = create_arena(scenario)
@@ -65,9 +92,15 @@ def train(mode: str, scenario: dict, n_iterations: int, seed: int = 0):
 
         grad = optimizer.evaluate(mode, loss_fn)
         params = optimizer._to_dict(optimizer.theta)
-        result = run_episode(params, arena)
-        loss = compute_loss(result, max_dur)
+
+        # Average loss over multiple randomizations for smoother curves
+        loss = _average_loss_over_randomizations(
+            params, arena, scenario, rng, n_eval_samples, max_dur
+        )
         losses.append(loss)
+
+        # Store trajectory from the last randomization (for visualization)
+        result = run_episode(params, arena)
         trajectories.append(result["trajectory"])
         traj_meta.append((arena.start_pos.copy(), arena.target_pos.copy()))
         print(
@@ -263,6 +296,10 @@ def main():
         "--no-display", action="store_true",
         help="Do not show plot window, only save to file"
     )
+    parser.add_argument(
+        "--n-eval", type=int, default=5,
+        help="Number of random position samples to average loss over (default: 5)"
+    )
     args = parser.parse_args()
 
     if args.no_display:
@@ -273,7 +310,7 @@ def main():
     print(f"Mode: {args.mode}, Iterations: {args.iterations}, Seed: {args.seed}")
 
     optimizer, losses, trajectories, traj_meta = train(
-        args.mode, scenario, args.iterations, args.seed
+        args.mode, scenario, args.iterations, args.seed, n_eval_samples=args.n_eval
     )
 
     # Final runs on original config positions

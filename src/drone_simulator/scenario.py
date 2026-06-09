@@ -1,7 +1,8 @@
-"""Scenario loading, validation, and position randomization."""
+"""Scenario loading, validation, position randomization, and generation."""
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -101,3 +102,98 @@ def randomize_positions(
     arena.start_pos = start_orig
     arena.target_pos = target_orig
     return start_orig, target_orig
+
+
+def generate_wall_scenario(
+    arena_size: float = 30.0,
+    arena_height: float = 20.0,
+    n_walls: int = 1,
+    wall_thickness: float = 1.5,
+    gap_size: float = 3.0,
+    seed: int = 0,
+) -> dict:
+    """Generate a scenario with perpendicular walls that force maneuvers.
+
+    The start is at the left edge, target at the right edge.
+    Walls are placed vertically (perpendicular to start->target line) with
+    a single narrow gap.  Drones cannot fly around the walls because they
+    span the full arena height.
+
+    Parameters
+    ----------
+    arena_size : float
+        Distance from start to target along X.
+    arena_height : float
+        Height of the arena along Y.
+    n_walls : int
+        Number of walls (1 or 2).
+    wall_thickness : float
+        Thickness of each wall segment (rectangles).
+    gap_size : float
+        Size of the gap in each wall.
+    seed : int
+        Random seed for gap placement.
+
+    Returns
+    -------
+    dict
+        Validated scenario dictionary.
+    """
+    rng = np.random.default_rng(seed)
+    start = [0.0, arena_height / 2]
+    target = [arena_size, arena_height / 2]
+
+    obstacles = []
+    half_thick = wall_thickness / 2
+
+    center_y = arena_height / 2
+
+    for w in range(n_walls):
+        wall_x = arena_size * (w + 1) / (n_walls + 1)
+        # Random gap center along Y, but enforce that the gap does NOT
+        # cover the central horizontal line (start/target height).
+        # This guarantees the straight-line path hits the wall.
+        min_gap = gap_size
+        max_gap = arena_height - gap_size
+        while True:
+            gap_center = rng.uniform(min_gap, max_gap)
+            if abs(gap_center - center_y) > gap_size / 2 + 0.5:
+                break
+        gap_bottom = gap_center - gap_size / 2
+        gap_top = gap_center + gap_size / 2
+
+        # Bottom segment
+        if gap_bottom > 0:
+            seg_h = gap_bottom
+            seg_y = seg_h / 2
+            obstacles.append([
+                wall_x, seg_y, wall_thickness, seg_h, "rect"
+            ])
+
+        # Top segment
+        if gap_top < arena_height:
+            seg_h = arena_height - gap_top
+            seg_y = gap_top + seg_h / 2
+            obstacles.append([
+                wall_x, seg_y, wall_thickness, seg_h, "rect"
+            ])
+
+    scenario = {
+        "start": start,
+        "target": target,
+        "obstacles": obstacles,
+        "speed": 5.0,
+        "dt": 0.05,
+        "max_duration": 100.0,
+        "target_tolerance": 1.0,
+    }
+    validate_scenario(scenario)
+    return scenario
+
+
+def save_scenario(scenario: dict, path: str | Path) -> None:
+    """Save a scenario dictionary to a JSON file."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w") as f:
+        json.dump(scenario, f, indent=2)
