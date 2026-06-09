@@ -261,7 +261,7 @@ def plot_results(
 
     plt.tight_layout()
     cfg_name = Path(config_path).stem
-    out_path = Path(f"results/maneuver_learning_{cfg_name}.png")
+    out_path = Path(f"results/{cfg_name}.png")
     out_path.parent.mkdir(exist_ok=True)
     plt.savefig(out_path, dpi=300, bbox_inches="tight")
     print(f"Saved: {out_path}")

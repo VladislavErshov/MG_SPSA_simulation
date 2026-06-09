@@ -215,6 +215,17 @@ def generate_grid_scenario(
         "target_tolerance": 1.0,
     }
     validate_scenario(scenario)
+
+    # Ensure target is not inside any obstacle; if it is, nudge toward start.
+    tmp_arena = create_arena(scenario)
+    nudge_vec = np.array(start) - np.array(target)
+    nudge_vec = nudge_vec / (np.linalg.norm(nudge_vec) + 1e-12)
+    while tmp_arena._check_collision(np.array(target)):
+        target[0] += nudge_vec[0] * 0.3
+        target[1] += nudge_vec[1] * 0.3
+        scenario["target"] = target
+        tmp_arena = create_arena(scenario)
+
     return scenario
 
 
