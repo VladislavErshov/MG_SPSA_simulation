@@ -181,19 +181,20 @@ def generate_grid_scenario(
     grid_x0 = margin
     grid_y0 = margin
 
-    # Target: inside the grid, slightly jittered from exact centre
-    target_x = grid_x0 + grid_width / 2 + rng.uniform(-spacing * 0.2, spacing * 0.2)
-    target_y = grid_y0 + grid_height / 2 + rng.uniform(-spacing * 0.2, spacing * 0.2)
+    # Align target and start with the middle row of the grid so the straight
+    # line is guaranteed to cross that row of obstacles.
+    mid_iy = grid_ny // 2
+    target_x = grid_x0 + grid_width / 2
+    target_y = grid_y0 + mid_iy * spacing
 
-    # Start: outside the grid on the chosen side
     if start_side == "left":
-        start = [margin * 0.3, arena_height / 2]
+        start = [margin * 0.3, target_y]
     elif start_side == "right":
-        start = [arena_width - margin * 0.3, arena_height / 2]
+        start = [arena_width - margin * 0.3, target_y]
     elif start_side == "top":
-        start = [arena_width / 2, arena_height - margin * 0.3]
+        start = [target_x, arena_height - margin * 0.3]
     else:  # bottom
-        start = [arena_width / 2, margin * 0.3]
+        start = [target_x, margin * 0.3]
 
     target = [target_x, target_y]
 

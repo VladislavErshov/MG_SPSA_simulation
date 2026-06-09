@@ -170,7 +170,7 @@ def plot_results(
         zorder=3,
     )
 
-    # Markers only for final run
+    # Markers: target (center), fixed start, training starts (semi-transparent)
     target = np.array(scenario["target"])
     start = np.array(scenario["start"])
     ax.scatter(
@@ -182,6 +182,14 @@ def plot_results(
         label="Start", zorder=4, edgecolors="white", linewidths=0.5,
     )
 
+    # Training start positions — small semi-transparent dots
+    for i, (s_pos, _) in enumerate(traj_meta):
+        color = cmap(i / max(n_traj - 1, 1))
+        ax.scatter(
+            s_pos[0], s_pos[1], color=color, marker="o", s=15,
+            alpha=0.4, zorder=1,
+        )
+
     for obs_data in scenario["obstacles"]:
         draw_obstacle(ax, parse_obstacle(obs_data), alpha=0.15)
 
@@ -191,16 +199,20 @@ def plot_results(
     ax.legend(loc="upper left", fontsize=8)
     ax.grid(True, alpha=0.3)
     ax.set_aspect("equal")
-    pts = [scenario["start"], scenario["target"]]
+    # Center view on target with margin based on arena span
+    all_pts = [scenario["start"], scenario["target"]]
     for obs_data in scenario["obstacles"]:
-        pts.append([obs_data[0], obs_data[1]])
+        all_pts.append([obs_data[0], obs_data[1]])
     for res in [baseline_result, final_result]:
         for p in res["trajectory"][::max(1, len(res["trajectory"]) // 30)]:
-            pts.append(p.tolist())
-    pts = np.array(pts)
-    margin = 2.0
-    ax.set_xlim(pts[:, 0].min() - margin, pts[:, 0].max() + margin)
-    ax.set_ylim(pts[:, 1].min() - margin, pts[:, 1].max() + margin)
+            all_pts.append(p.tolist())
+    all_pts = np.array(all_pts)
+    half_span = max(
+        all_pts[:, 0].max() - all_pts[:, 0].min(),
+        all_pts[:, 1].max() - all_pts[:, 1].min(),
+    ) / 2 + 2.0
+    ax.set_xlim(target[0] - half_span, target[0] + half_span)
+    ax.set_ylim(target[1] - half_span, target[1] + half_span)
 
     # --- [0,1] Parameter convergence ------------------------------
     ax2 = axes[0, 1]
