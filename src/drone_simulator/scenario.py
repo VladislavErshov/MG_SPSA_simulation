@@ -82,6 +82,14 @@ def randomize_positions(
     span_x = max(all_x) - min(all_x)
     span_y = max(all_y) - min(all_y)
 
+    # Compute obstacle bounding box with a small padding.
+    # For grid arenas we want the start to stay outside this box.
+    obs_xs = [obs.x for obs in arena.obstacles]
+    obs_ys = [obs.y for obs in arena.obstacles]
+    pad = max(span_x, span_y) * 0.05
+    obs_min_x, obs_max_x = min(obs_xs) - pad, max(obs_xs) + pad
+    obs_min_y, obs_max_y = min(obs_ys) - pad, max(obs_ys) + pad
+
     for _ in range(max_attempts):
         angle = rng.uniform(0, 2 * np.pi)
         dx = rng.uniform(-span_x * 0.25, span_x * 0.25)
@@ -92,10 +100,18 @@ def randomize_positions(
         new_start = new_mid - (distance / 2) * direction
         new_target = new_mid + (distance / 2) * direction
 
-        if not arena._check_collision(new_start) and not arena._check_collision(new_target):
-            arena.start_pos = new_start
-            arena.target_pos = new_target
-            return new_start, new_target
+        if arena._check_collision(new_start) or arena._check_collision(new_target):
+            continue
+
+        # Reject if the start landed inside the obstacle bounding box.
+        # This prevents grid-arena starts from appearing inside the grid.
+        if (obs_min_x <= new_start[0] <= obs_max_x and
+                obs_min_y <= new_start[1] <= obs_max_y):
+            continue
+
+        arena.start_pos = new_start
+        arena.target_pos = new_target
+        return new_start, new_target
 
     arena.start_pos = start_orig
     arena.target_pos = target_orig
