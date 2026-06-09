@@ -1,40 +1,58 @@
-"""Generate random wall scenarios for maneuver learning.
+"""Generate random scenarios for maneuver learning.
 
 Usage:
-    python examples/generate_random_scenario.py --out configs/simulation/random_wall_1.json --seed 1
-    python examples/generate_random_scenario.py --n-walls 2 --gap-size 2.5 --seed 42
+    # Generate all grid variants
+    python examples/generate_random_scenario.py --all-grids --seed 1
+
+    # Generate a single wall scenario
+    python examples/generate_random_scenario.py --type wall --out configs/simulation/random_wall.json --seed 42
+
+    # Generate a single grid scenario
+    python examples/generate_random_scenario.py --type grid --shape star5 --out configs/simulation/random_stars.json
 """
 
 import argparse
 
-from drone_simulator.scenario import generate_wall_scenario, save_scenario
+from drone_simulator.scenario import generate_grid_scenario, generate_wall_scenario, save_scenario
+
+
+GRID_SHAPES = ["circle", "rect", "diamond", "star5", "cross", "crossed_rect"]
+
+
+def generate_all_grids(seed: int) -> None:
+    """Generate one scenario for each supported grid shape."""
+    for shape in GRID_SHAPES:
+        out_path = f"configs/simulation/grid_{shape}_random.json"
+        scenario = generate_grid_scenario(
+            shape=shape,  # type: ignore[arg-type]
+            grid_nx=5,
+            grid_ny=4,
+            spacing=5.0,
+            obstacle_size=2.0,
+            start_side="left",
+            seed=seed,
+        )
+        save_scenario(scenario, out_path)
+        print(f"Saved grid_{shape}_random.json  ({len(scenario['obstacles'])} obstacles)")
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Generate random wall scenario")
+    parser = argparse.ArgumentParser(description="Generate random scenarios")
     parser.add_argument(
-        "--out", type=str, default="configs/simulation/random_wall.json",
-        help="Output path for the generated scenario JSON"
+        "--all-grids", action="store_true",
+        help="Generate all grid-shape variants (circle, rect, diamond, star5, cross, crossed_rect)"
     )
     parser.add_argument(
-        "--arena-size", type=float, default=30.0,
-        help="Distance from start to target"
+        "--type", type=str, default="wall", choices=["wall", "grid"],
+        help="Scenario type"
     )
     parser.add_argument(
-        "--arena-height", type=float, default=20.0,
-        help="Height of the arena"
+        "--shape", type=str, default="circle", choices=GRID_SHAPES,
+        help="Grid obstacle shape (only for --type grid)"
     )
     parser.add_argument(
-        "--n-walls", type=int, default=1, choices=[1, 2],
-        help="Number of walls (1 or 2)"
-    )
-    parser.add_argument(
-        "--wall-thickness", type=float, default=1.5,
-        help="Thickness of each wall segment"
-    )
-    parser.add_argument(
-        "--gap-size", type=float, default=3.0,
-        help="Size of the gap in each wall"
+        "--out", type=str, default="configs/simulation/random_scenario.json",
+        help="Output path"
     )
     parser.add_argument(
         "--seed", type=int, default=0,
@@ -42,16 +60,19 @@ def main():
     )
     args = parser.parse_args()
 
-    scenario = generate_wall_scenario(
-        arena_size=args.arena_size,
-        arena_height=args.arena_height,
-        n_walls=args.n_walls,
-        wall_thickness=args.wall_thickness,
-        gap_size=args.gap_size,
-        seed=args.seed,
-    )
+    if args.all_grids:
+        generate_all_grids(args.seed)
+        return
+
+    if args.type == "wall":
+        scenario = generate_wall_scenario(seed=args.seed)
+    else:
+        scenario = generate_grid_scenario(
+            shape=args.shape,  # type: ignore[arg-type]
+            seed=args.seed,
+        )
     save_scenario(scenario, args.out)
-    print(f"Saved scenario with {len(scenario['obstacles'])} obstacles to {args.out}")
+    print(f"Saved {args.out}  ({len(scenario['obstacles'])} obstacles)")
 
 
 if __name__ == "__main__":

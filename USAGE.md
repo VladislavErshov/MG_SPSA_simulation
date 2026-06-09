@@ -6,13 +6,61 @@
 pip install -e .
 ```
 
-## Run
+## Generate Scenarios
+
+### Generate all grid-shape variants
 
 ```bash
-python examples/run_and_plot.py --mode spsa2 --iterations 30
+python examples/generate_random_scenario.py --all-grids --seed 1
+```
+
+This creates 6 configs under `configs/simulation/`:
+- `grid_circle_random.json`
+- `grid_rect_random.json`
+- `grid_diamond_random.json`
+- `grid_star5_random.json`
+- `grid_cross_random.json`
+- `grid_crossed_rect_random.json`
+
+### Generate a single wall scenario
+
+```bash
+python examples/generate_random_scenario.py --type wall --out configs/simulation/my_wall.json --seed 42
+```
+
+### Generate a single grid scenario
+
+```bash
+python examples/generate_random_scenario.py --type grid --shape star5 --out configs/simulation/my_stars.json --seed 7
+```
+
+## Run Training
+
+### Train on a single scenario
+
+```bash
+python examples/run_and_plot.py --config configs/simulation/default.json --mode spsa2 --iterations 30
 python examples/run_and_plot.py --mode spsa1 --iterations 30 --seed 42
 python examples/run_and_plot.py --config configs/simulation/corridor_3.json --mode spsa2 --iterations 30
-python examples/run_and_plot.py --config configs/simulation/grid.json --iterations 30 --no-display
+```
+
+### Train on all existing configs in `configs/simulation/`
+
+```bash
+for cfg in configs/simulation/*.json; do
+    echo "=== $(basename $cfg) ==="
+    python examples/run_and_plot.py --config "$cfg" --mode spsa2 --iterations 30 --seed 42 --no-display
+done
+```
+
+### Generate all grids and train on all of them
+
+```bash
+python examples/generate_random_scenario.py --all-grids --seed 1
+for cfg in configs/simulation/grid_*_random.json; do
+    echo "=== $(basename $cfg) ==="
+    python examples/run_and_plot.py --config "$cfg" --mode spsa2 --iterations 30 --seed 42 --no-display
+done
 ```
 
 Saves results to `results/maneuver_learning_<config_name>.png`.
@@ -26,6 +74,7 @@ Saves results to `results/maneuver_learning_<config_name>.png`.
 | `--iterations` | `30` | Number of training iterations |
 | `--seed` | `0` | Random seed |
 | `--no-display` | `False` | Save plot without showing window |
+| `--n-eval` | `5` | Number of random position samples to average loss over |
 
 ## Scenario Configuration
 
@@ -53,8 +102,8 @@ Scenario parameters are in JSON files under `configs/simulation/`:
 - `ManeuverOptimizer` — mixed-gradient optimizer for `[d_back, omega_turn, alpha_evade]`.
   - `d_back` and `omega_turn` — exact gradient via central finite difference.
   - `alpha_evade` — SPSA block:
-    - `spsa1` — one-measurement (off-center, first-order defect)
-    - `spsa2` — two-measurement (centered, second-order defect)
+    - `spsa1` — one-measurement (off-center)
+    - `spsa2` — two-measurement (centered)
   - Step size: `a / (n + A)` (Robbins–Monro schedule).
   - Perturbation: `c / n^{γ}` where `γ = 1/4` for spsa1 and `γ = 1/6` for spsa2.
   - Gradient normalization by component-wise max.

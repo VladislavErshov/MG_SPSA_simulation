@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import numpy as np
 
@@ -27,8 +27,6 @@ def load_scenario(config_path: str | Path) -> dict:
         # Assume relative to project root when called from examples/
         project_root = Path(__file__).parent.parent.parent
         path = project_root / path
-
-    import json
 
     with open(path, "r") as f:
         scenario = json.load(f)
@@ -104,6 +102,122 @@ def randomize_positions(
     return start_orig, target_orig
 
 
+def _build_crossed_rect_obstacle(
+    cx: float, cy: float, size: float, horizontal: bool
+) -> list:
+    """Build a crossed-rect obstacle: either horizontal or vertical bar."""
+    if horizontal:
+        return [cx, cy, size * 2.2, size * 0.4, "rect"]
+    else:
+        return [cx, cy, size * 0.4, size * 2.2, "rect"]
+
+
+def _build_grid_obstacle(
+    shape: str,
+    cx: float,
+    cy: float,
+    size: float,
+    is_horizontal: bool = True,
+) -> list:
+    """Build a single grid obstacle based on shape type."""
+    if shape == "circle":
+        return [cx, cy, size]
+    if shape == "star5":
+        return [cx, cy, size, "star5"]
+    if shape == "cross":
+        return [cx, cy, size, size * 0.3, "cross"]
+    if shape == "diamond":
+        return [cx, cy, size * 1.6, size * 1.6, "diamond"]
+    if shape == "crossed_rect":
+        return _build_crossed_rect_obstacle(cx, cy, size, is_horizontal)
+    # default rect
+    return [cx, cy, size * 1.4, size * 1.2, "rect"]
+
+
+def generate_grid_scenario(
+    shape: Literal["circle", "rect", "diamond", "star5", "cross", "crossed_rect"] = "circle",
+    grid_nx: int = 5,
+    grid_ny: int = 4,
+    spacing: float = 5.0,
+    obstacle_size: float = 2.0,
+    start_side: Literal["left", "right", "top", "bottom"] = "left",
+    seed: int = 0,
+) -> dict:
+    """Generate a scenario with a dense obstacle grid.
+
+    The target is placed inside the grid; the start is outside.
+    The drone must break through the grid to reach the target.
+
+    Parameters
+    ----------
+    shape : str
+        Obstacle shape type.
+    grid_nx, grid_ny : int
+        Number of obstacles along X and Y.
+    spacing : float
+        Distance between obstacle centres.
+    obstacle_size : float
+        Size parameter (radius / arm / half-width).
+    start_side : str
+        Which side of the grid the start is on.
+    seed : int
+        Random seed (unused, kept for API consistency).
+
+    Returns
+    -------
+    dict
+        Validated scenario dictionary.
+    """
+    rng = np.random.default_rng(seed)
+
+    grid_width = (grid_nx - 1) * spacing
+    grid_height = (grid_ny - 1) * spacing
+    margin = spacing * 1.5
+
+    arena_width = grid_width + 2 * margin
+    arena_height = grid_height + 2 * margin
+
+    # Grid top-left corner
+    grid_x0 = margin
+    grid_y0 = margin
+
+    # Target: inside the grid, slightly jittered from exact centre
+    target_x = grid_x0 + grid_width / 2 + rng.uniform(-spacing * 0.2, spacing * 0.2)
+    target_y = grid_y0 + grid_height / 2 + rng.uniform(-spacing * 0.2, spacing * 0.2)
+
+    # Start: outside the grid on the chosen side
+    if start_side == "left":
+        start = [margin * 0.3, arena_height / 2]
+    elif start_side == "right":
+        start = [arena_width - margin * 0.3, arena_height / 2]
+    elif start_side == "top":
+        start = [arena_width / 2, arena_height - margin * 0.3]
+    else:  # bottom
+        start = [arena_width / 2, margin * 0.3]
+
+    target = [target_x, target_y]
+
+    obstacles = []
+    for iy in range(grid_ny):
+        for ix in range(grid_nx):
+            cx = grid_x0 + ix * spacing
+            cy = grid_y0 + iy * spacing
+            is_horizontal = (ix + iy) % 2 == 0
+            obstacles.append(_build_grid_obstacle(shape, cx, cy, obstacle_size, is_horizontal))
+
+    scenario = {
+        "start": start,
+        "target": target,
+        "obstacles": obstacles,
+        "speed": 5.0,
+        "dt": 0.05,
+        "max_duration": 100.0,
+        "target_tolerance": 1.0,
+    }
+    validate_scenario(scenario)
+    return scenario
+
+
 def generate_wall_scenario(
     arena_size: float = 30.0,
     arena_height: float = 20.0,
@@ -118,33 +232,12 @@ def generate_wall_scenario(
     Walls are placed vertically (perpendicular to start->target line) with
     a single narrow gap.  Drones cannot fly around the walls because they
     span the full arena height.
-
-    Parameters
-    ----------
-    arena_size : float
-        Distance from start to target along X.
-    arena_height : float
-        Height of the arena along Y.
-    n_walls : int
-        Number of walls (1 or 2).
-    wall_thickness : float
-        Thickness of each wall segment (rectangles).
-    gap_size : float
-        Size of the gap in each wall.
-    seed : int
-        Random seed for gap placement.
-
-    Returns
-    -------
-    dict
-        Validated scenario dictionary.
     """
     rng = np.random.default_rng(seed)
     start = [0.0, arena_height / 2]
     target = [arena_size, arena_height / 2]
 
     obstacles = []
-    half_thick = wall_thickness / 2
 
     center_y = arena_height / 2
 
