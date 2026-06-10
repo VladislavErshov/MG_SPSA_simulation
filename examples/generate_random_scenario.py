@@ -21,16 +21,16 @@ GRID_SHAPES = ["circle", "rect", "diamond", "star5", "cross", "crossed_rect"]
 
 def generate_all_grids(seed: int) -> None:
     """Generate one scenario for each supported grid shape."""
-    for shape in GRID_SHAPES:
+    sides = ["left", "right", "top", "bottom"]
+    for i, shape in enumerate(GRID_SHAPES):
         out_path = f"configs/simulation/grid_{shape}_random.json"
         scenario = generate_grid_scenario(
             shape=shape,  # type: ignore[arg-type]
-            grid_nx=5,
-            grid_ny=4,
+            grid_n=5,
             spacing=5.0,
             obstacle_size=2.0,
-            start_side="left",
-            seed=seed,
+            start_side=sides[i % len(sides)],  # type: ignore[arg-type]
+            seed=seed + i,
         )
         save_scenario(scenario, out_path)
         print(f"Saved grid_{shape}_random.json  ({len(scenario['obstacles'])} obstacles)")
@@ -69,6 +69,7 @@ def main():
     else:
         scenario = generate_grid_scenario(
             shape=args.shape,  # type: ignore[arg-type]
+            start_side="random",
             seed=args.seed,
         )
     save_scenario(scenario, args.out)

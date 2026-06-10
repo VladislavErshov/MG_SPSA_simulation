@@ -27,7 +27,7 @@ def run_episode(params: dict, arena: Drone) -> dict:
     return arena.fly_episode(params)
 
 
-def compute_loss(result: dict, max_duration: float = 100.0) -> float:
+def compute_loss(result: dict) -> float:
     traj = result["trajectory"]
     if len(traj) > 1:
         diffs = np.diff(traj, axis=0)
@@ -55,13 +55,13 @@ def _average_loss_over_randomizations(
     """Evaluate loss averaged over n_samples random start/target positions."""
     if n_samples <= 1:
         result = run_episode(params, arena)
-        return compute_loss(result, max_dur)
+        return compute_loss(result)
 
     total_loss = 0.0
     for _ in range(n_samples):
         randomize_positions(arena, scenario, rng)
         result = run_episode(params, arena)
-        total_loss += compute_loss(result, max_dur)
+        total_loss += compute_loss(result)
     return total_loss / n_samples
 
 
@@ -80,12 +80,13 @@ def train(
     max_dur = scenario.get("max_duration", 100.0)
 
     losses = []
+    times = []
     trajectories = []
     traj_meta = []  # (start, target) for each trajectory
 
     def loss_fn(theta_dict: dict) -> float:
         result = run_episode(theta_dict, arena)
-        return compute_loss(result, max_dur)
+        return compute_loss(result)
 
     for i in range(n_iterations):
         randomize_positions(arena, scenario, rng)
@@ -99,19 +100,20 @@ def train(
         )
         losses.append(loss)
 
-        # Store trajectory from the last randomization (for visualization)
+        # Store trajectory and time from the last randomization (for visualization)
         result = run_episode(params, arena)
+        times.append(result["time"])
         trajectories.append(result["trajectory"])
         traj_meta.append((arena.start_pos.copy(), arena.target_pos.copy()))
         print(
-            f"Iter {i + 1:3d}: loss={loss:7.2f}  "
+            f"Iter {i + 1:3d}: loss={loss:7.2f}  time={result['time']:5.1f}s  "
             f"d_back={params['d_back']:.2f}  "
             f"omega={params['omega_turn']:.2f}  "
             f"alpha={params['alpha_evade']:.3f}  "
             f"grad=[{grad[0]:7.2f} {grad[1]:7.2f} {grad[2]:7.2f}]"
         )
 
-    return optimizer, losses, trajectories, traj_meta
+    return optimizer, losses, times, trajectories, traj_meta
 
 
 # ------------------------------------------------------------------
@@ -120,13 +122,14 @@ def train(
 def _fly_and_measure(params: dict, scenario: dict) -> dict:
     arena = create_arena(scenario)
     result = arena.fly_episode(params)
-    result["loss"] = compute_loss(result, scenario.get("max_duration", 100.0))
+    result["loss"] = compute_loss(result)
     return result
 
 
 def plot_results(
     optimizer: ManeuverOptimizer,
     losses: list,
+    times: list,
     trajectories: list,
     traj_meta: list,
     mode: str,
@@ -206,13 +209,18 @@ def plot_results(
     for res in [baseline_result, final_result]:
         for p in res["trajectory"][::max(1, len(res["trajectory"]) // 30)]:
             all_pts.append(p.tolist())
+    for s_pos, t_pos in traj_meta:
+        all_pts.append(s_pos.tolist())
+        all_pts.append(t_pos.tolist())
     all_pts = np.array(all_pts)
     half_span = max(
         all_pts[:, 0].max() - all_pts[:, 0].min(),
         all_pts[:, 1].max() - all_pts[:, 1].min(),
     ) / 2 + 2.0
-    ax.set_xlim(target[0] - half_span, target[0] + half_span)
-    ax.set_ylim(target[1] - half_span, target[1] + half_span)
+    mid_x = (all_pts[:, 0].min() + all_pts[:, 0].max()) / 2
+    mid_y = (all_pts[:, 1].min() + all_pts[:, 1].max()) / 2
+    ax.set_xlim(mid_x - half_span, mid_x + half_span)
+    ax.set_ylim(mid_y - half_span, mid_y + half_span)
 
     # --- [0,1] Parameter convergence ------------------------------
     ax2 = axes[0, 1]
@@ -231,11 +239,33 @@ def plot_results(
 
     # --- [1,0] Loss dynamics -------------------------------------
     ax3 = axes[1, 0]
-    ax3.plot(range(1, len(losses) + 1), losses, color="darkgreen", linewidth=2)
+    iters = range(1, len(losses) + 1)
+    ax3.plot(iters, losses, color="darkgreen", linewidth=1.5, alpha=0.6, label="Loss")
+
+    # MA5 smoothed loss
+    if len(losses) >= 5:
+        ma5 = np.convolve(losses, np.ones(5) / 5, mode="valid")
+        ax3.plot(range(3, len(losses) - 1), ma5, color="darkgreen", linewidth=2.5, label="Loss (MA5)")
+
     ax3.set_xlabel("Iteration")
-    ax3.set_ylabel("Loss")
+    ax3.set_ylabel("Loss", color="darkgreen")
+    ax3.tick_params(axis="y", labelcolor="darkgreen")
     ax3.set_title("Loss dynamics")
     ax3.grid(True, alpha=0.3)
+
+    ax3_twin = ax3.twinx()
+    ax3_twin.plot(range(1, len(times) + 1), times, color="tab:blue", linewidth=1.5, alpha=0.6, linestyle="--", label="Time (s)")
+
+    # MA5 smoothed time
+    if len(times) >= 5:
+        ma5_time = np.convolve(times, np.ones(5) / 5, mode="valid")
+        ax3_twin.plot(range(3, len(times) - 1), ma5_time, color="tab:blue", linewidth=2.5, linestyle="--", label="Time (MA5)")
+
+    ax3_twin.set_ylabel("Time (s)", color="tab:blue")
+    ax3_twin.tick_params(axis="y", labelcolor="tab:blue")
+    lines1, labels1 = ax3.get_legend_handles_labels()
+    lines2, labels2 = ax3_twin.get_legend_handles_labels()
+    ax3.legend(lines1 + lines2, labels1 + labels2, loc="upper right", fontsize=8)
 
     # --- [1,1] Results summary ---------------------------------
     ax4 = axes[1, 1]
@@ -321,7 +351,7 @@ def main():
     print(f"Config: {args.config}")
     print(f"Mode: {args.mode}, Iterations: {args.iterations}, Seed: {args.seed}")
 
-    optimizer, losses, trajectories, traj_meta = train(
+    optimizer, losses, times, trajectories, traj_meta = train(
         args.mode, scenario, args.iterations, args.seed, n_eval_samples=args.n_eval
     )
 
@@ -347,7 +377,7 @@ def main():
     )
 
     plot_results(
-        optimizer, losses, trajectories, traj_meta,
+        optimizer, losses, times, trajectories, traj_meta,
         args.mode, scenario, final_result, baseline_result, args.config,
         show_plot=not args.no_display,
     )

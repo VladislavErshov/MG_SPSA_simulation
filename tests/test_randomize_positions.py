@@ -101,20 +101,20 @@ class TestRandomizePositions:
 class TestTrainReturnsTrajMeta:
     """Tests that train() returns trajectory metadata with start/target positions."""
 
-    def test_train_returns_four_elements(self):
-        """Given training, when complete, then returns (optimizer, losses, trajectories, traj_meta)."""
+    def test_train_returns_five_elements(self):
+        """Given training, when complete, then returns (optimizer, losses, times, trajectories, traj_meta)."""
         from examples.run_and_plot import train
 
         scenario = _default_scenario()
         result = train("spsa2", scenario, n_iterations=2, seed=0)
-        assert len(result) == 4
+        assert len(result) == 5
 
     def test_traj_meta_matches_trajectories_count(self):
         """Given training, when complete, then traj_meta length equals trajectories length."""
         from examples.run_and_plot import train
 
         scenario = _default_scenario()
-        _, _, trajectories, traj_meta = train("spsa2", scenario, n_iterations=3, seed=1)
+        _, _, _, trajectories, traj_meta = train("spsa2", scenario, n_iterations=3, seed=1)
         assert len(traj_meta) == len(trajectories) == 3
 
     def test_traj_meta_contains_start_target_arrays(self):
@@ -122,7 +122,7 @@ class TestTrainReturnsTrajMeta:
         from examples.run_and_plot import train
 
         scenario = _default_scenario()
-        _, _, _, traj_meta = train("spsa2", scenario, n_iterations=2, seed=2)
+        _, _, _, _, traj_meta = train("spsa2", scenario, n_iterations=2, seed=2)
         for start, target in traj_meta:
             assert isinstance(start, np.ndarray)
             assert isinstance(target, np.ndarray)

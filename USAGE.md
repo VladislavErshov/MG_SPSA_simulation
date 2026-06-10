@@ -49,7 +49,7 @@ python examples/run_and_plot.py --config configs/simulation/corridor_3.json --mo
 ```bash
 for cfg in configs/simulation/*.json; do
     echo "=== $(basename $cfg) ==="
-    python examples/run_and_plot.py --config "$cfg" --mode spsa2 --iterations 30 --seed 42 --no-display
+    python examples/run_and_plot.py --config "$cfg" --mode spsa2 --iterations 60 --seed 42 --no-display
 done
 ```
 
@@ -59,7 +59,7 @@ done
 python examples/generate_random_scenario.py --all-grids --seed 1
 for cfg in configs/simulation/grid_*_random.json; do
     echo "=== $(basename $cfg) ==="
-    python examples/run_and_plot.py --config "$cfg" --mode spsa2 --iterations 30 --seed 42 --no-display
+    python examples/run_and_plot.py --config "$cfg" --mode spsa2 --iterations 60 --seed 42 --no-display
 done
 ```
 

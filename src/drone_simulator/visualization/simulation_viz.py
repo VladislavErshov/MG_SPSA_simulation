@@ -40,7 +40,7 @@ def draw_obstacle(
         polygon = Polygon(corners, color=color, alpha=alpha, fill=fill)
         ax.add_patch(polygon)
     elif isinstance(obs, Star):
-        _draw_star(ax, x, y, 5, obs.radius * 1.5, obs.radius * 0.6, color, alpha, fill)
+        _draw_star(ax, x, y, 5, obs.radius, obs.radius * 0.4, color, alpha, fill)
     elif isinstance(obs, Cross):
         for w, h in [(2 * obs.arm, obs.thickness), (obs.thickness, 2 * obs.arm)]:
             rect = Rectangle((x - w / 2, y - h / 2), w, h, color=color, alpha=alpha, fill=fill)
@@ -53,4 +53,4 @@ def draw_obstacle(
         r = obs.radius
         circle = Circle((x, y), r, color=color, alpha=alpha, fill=fill)
         ax.add_patch(circle)
-    ax.plot(x, y, "rx", markersize=8)
+

@@ -16,7 +16,8 @@ def test_config_defaults():
     assert cfg.burn_in == 0
     assert cfg.epsilon_exact == 0.25
     assert cfg.d_back_min == 0.5
-    assert cfg.n_spsa_samples == 3
+    assert cfg.n_spsa_samples == 7
+    assert cfg.momentum == pytest.approx(0.0)
 
 
 def test_optimizer_initialization():

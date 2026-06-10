@@ -39,7 +39,11 @@ class ManeuverOptimizerConfig:
     alpha_evade_max: float = 2 * np.pi
 
     # SPSA smoothing
-    n_spsa_samples: int = 3
+    n_spsa_samples: int = 7
+
+    # Momentum for parameter updates (0 = no momentum; >0 smooths trajectory but
+    # may hurt convergence when each iteration uses different random positions)
+    momentum: float = 0.0
 
     # Initial values
     d_back_init: float = 2.0
@@ -59,6 +63,7 @@ class ManeuverOptimizer:
                 config.alpha_evade_init,
             ]
         )
+        self.velocity = np.zeros(3)
         self.iteration = 0
         self.history: list[dict] = []
 
@@ -116,13 +121,15 @@ class ManeuverOptimizer:
 
         grad = np.array([grad_0, grad_1, grad_2])
 
-        # Normalize by component-wise max to keep relative magnitudes but cap scale
+        # Normalize by max absolute component to keep relative magnitudes
         max_abs = np.max(np.abs(grad))
         if max_abs > 0:
             grad = grad / max_abs
 
-        # --- update -------------------------------------------------
-        self.theta = self.theta - alpha_n * grad
+        # --- update with momentum (EMA, weighted average) -----------
+        m = self.config.momentum
+        self.velocity = m * self.velocity + (1.0 - m) * grad
+        self.theta = self.theta - alpha_n * self.velocity
         self._clip()
 
         # --- history ------------------------------------------------
@@ -130,6 +137,7 @@ class ManeuverOptimizer:
             {
                 "theta": self.theta.copy(),
                 "grad": grad.copy(),
+                "velocity": self.velocity.copy(),
                 "loss": run_fn(self._to_dict(self.theta)),
             }
         )

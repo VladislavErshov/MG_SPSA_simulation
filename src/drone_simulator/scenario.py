@@ -74,6 +74,25 @@ def randomize_positions(
     """Shift start/target while preserving distance and avoiding obstacles."""
     start_orig = np.array(scenario["start"], dtype=float)
     target_orig = np.array(scenario["target"], dtype=float)
+
+    zone = scenario.get("start_zone")
+    if zone:
+        cx, cy = zone["cx"], zone["cy"]
+        r_min, r_max = zone["r_min"], zone["r_max"]
+        center = np.array([cx, cy], dtype=float)
+        for _ in range(max_attempts):
+            distance = rng.uniform(r_min, r_max)
+            angle = rng.uniform(0, 2 * np.pi)
+            new_start = center + distance * np.array([np.cos(angle), np.sin(angle)])
+            if arena._check_collision(new_start):
+                continue
+            arena.start_pos = new_start
+            arena.target_pos = center
+            return new_start, center
+        arena.start_pos = start_orig
+        arena.target_pos = target_orig
+        return start_orig, target_orig
+
     distance = float(np.linalg.norm(target_orig - start_orig))
     midpoint = (start_orig + target_orig) / 2
 
@@ -123,9 +142,9 @@ def _build_crossed_rect_obstacle(
 ) -> list:
     """Build a crossed-rect obstacle: either horizontal or vertical bar."""
     if horizontal:
-        return [cx, cy, size * 2.2, size * 0.4, "rect"]
+        return [cx, cy, size * 1.5, size * 0.3, "rect"]
     else:
-        return [cx, cy, size * 0.4, size * 2.2, "rect"]
+        return [cx, cy, size * 0.3, size * 1.5, "rect"]
 
 
 def _build_grid_obstacle(
@@ -137,57 +156,64 @@ def _build_grid_obstacle(
 ) -> list:
     """Build a single grid obstacle based on shape type."""
     if shape == "circle":
-        return [cx, cy, size]
+        return [cx, cy, size / 1.5]
     if shape == "star5":
-        return [cx, cy, size, "star5"]
+        return [cx, cy, size * 0.625, "star5"]
     if shape == "cross":
-        return [cx, cy, size, size * 0.3, "cross"]
+        return [cx, cy, size * 0.5, size * 0.3, "cross"]
     if shape == "diamond":
         return [cx, cy, size * 1.6, size * 1.6, "diamond"]
     if shape == "crossed_rect":
         return _build_crossed_rect_obstacle(cx, cy, size, is_horizontal)
     # default rect
-    return [cx, cy, size * 1.4, size * 1.2, "rect"]
+    return [cx, cy, size * 1, size * 1, "rect"]
 
 
 def generate_grid_scenario(
     shape: Literal["circle", "rect", "diamond", "star5", "cross", "crossed_rect"] = "circle",
-    grid_nx: int = 5,
-    grid_ny: int = 4,
+    grid_n: int = 5,
     spacing: float = 5.0,
     obstacle_size: float = 2.0,
-    start_side: Literal["left", "right", "top", "bottom"] = "left",
+    start_side: Literal["left", "right", "top", "bottom", "random"] = "left",
     seed: int = 0,
 ) -> dict:
-    """Generate a scenario with a dense obstacle grid.
+    """Generate a scenario with a dense n×n obstacle grid.
 
-    The target is placed inside the grid; the start is outside.
-    The drone must break through the grid to reach the target.
+    The grid size n must be odd. The target is placed in the centre cell
+    and the central obstacle is removed. The start is placed outside the
+    grid so that the straight line to the target passes through a row or
+    column of obstacles.
 
     Parameters
     ----------
     shape : str
         Obstacle shape type.
-    grid_nx, grid_ny : int
-        Number of obstacles along X and Y.
+    grid_n : int
+        Number of obstacles along each axis (must be odd).
     spacing : float
         Distance between obstacle centres.
     obstacle_size : float
         Size parameter (radius / arm / half-width).
     start_side : str
-        Which side of the grid the start is on.
+        Which side of the grid the start is on ("random" picks one).
     seed : int
-        Random seed (unused, kept for API consistency).
+        Random seed.
 
     Returns
     -------
     dict
         Validated scenario dictionary.
     """
+    if grid_n % 2 == 0:
+        raise ValueError("grid_n must be odd so the grid has a unique centre cell")
+
     rng = np.random.default_rng(seed)
 
-    grid_width = (grid_nx - 1) * spacing
-    grid_height = (grid_ny - 1) * spacing
+    if start_side == "random":
+        start_side = rng.choice(["left", "right", "top", "bottom"]).item()  # type: ignore[assignment]
+
+    grid_width = (grid_n - 1) * spacing
+    grid_height = grid_width
     margin = spacing * 1.5
 
     arena_width = grid_width + 2 * margin
@@ -197,30 +223,101 @@ def generate_grid_scenario(
     grid_x0 = margin
     grid_y0 = margin
 
-    # Align target and start with the middle row of the grid so the straight
-    # line is guaranteed to cross that row of obstacles.
-    mid_iy = grid_ny // 2
-    target_x = grid_x0 + grid_width / 2
-    target_y = grid_y0 + mid_iy * spacing
-
-    if start_side == "left":
-        start = [margin * 0.3, target_y]
-    elif start_side == "right":
-        start = [arena_width - margin * 0.3, target_y]
-    elif start_side == "top":
-        start = [target_x, arena_height - margin * 0.3]
-    else:  # bottom
-        start = [target_x, margin * 0.3]
-
+    # Place target in the centre cell and remove that obstacle.
+    mid_i = grid_n // 2
+    target_x = grid_x0 + mid_i * spacing
+    target_y = grid_y0 + mid_i * spacing
     target = [target_x, target_y]
 
+    # Base start (used for distance and span calculations only).
+    if start_side == "left":
+        base_start = [margin * 0.3, target_y]
+    elif start_side == "right":
+        base_start = [arena_width - margin * 0.3, target_y]
+    elif start_side == "top":
+        base_start = [target_x, arena_height - margin * 0.3]
+    else:  # bottom
+        base_start = [target_x, margin * 0.3]
+
     obstacles = []
-    for iy in range(grid_ny):
-        for ix in range(grid_nx):
+    for iy in range(grid_n):
+        for ix in range(grid_n):
+            if ix == mid_i and iy == mid_i:
+                continue  # centre cell is the target
             cx = grid_x0 + ix * spacing
             cy = grid_y0 + iy * spacing
             is_horizontal = (ix + iy) % 2 == 0
             obstacles.append(_build_grid_obstacle(shape, cx, cy, obstacle_size, is_horizontal))
+
+    # Randomise start position inside a ring strictly around the obstacle grid.
+    base_start_arr = np.array(base_start, dtype=float)
+    target_arr = np.array(target, dtype=float)
+
+    obs_xs = [o[0] for o in obstacles]
+    obs_ys = [o[1] for o in obstacles]
+    all_x = obs_xs + [base_start_arr[0], target_arr[0]]
+    all_y = obs_ys + [base_start_arr[1], target_arr[1]]
+    span_x = max(all_x) - min(all_x)
+    span_y = max(all_y) - min(all_y)
+    pad = max(span_x, span_y) * 0.05
+    obs_min_x, obs_max_x = min(obs_xs) - pad, max(obs_xs) + pad
+    obs_min_y, obs_max_y = min(obs_ys) - pad, max(obs_ys) + pad
+
+    r_min = max(
+        abs(target_x - obs_min_x),
+        abs(target_x - obs_max_x),
+        abs(target_y - obs_min_y),
+        abs(target_y - obs_max_y),
+    )
+    start_zone_width = 2.0
+    r_max = r_min + start_zone_width
+
+    start_zone = {
+        "cx": float(target_x),
+        "cy": float(target_y),
+        "r_min": float(r_min),
+        "r_max": float(r_max),
+    }
+
+    tmp_scenario = {
+        "start": base_start,
+        "target": target,
+        "obstacles": obstacles,
+        "speed": 5.0,
+        "dt": 0.05,
+        "max_duration": 100.0,
+        "target_tolerance": 1.0,
+    }
+    validate_scenario(tmp_scenario)
+    tmp_arena = create_arena(tmp_scenario)
+
+    start = base_start
+    for _ in range(200):
+        distance = rng.uniform(r_min, r_max)
+        angle = rng.uniform(0, 2 * np.pi)
+        direction = np.array([np.cos(angle), np.sin(angle)])
+        new_start = target_arr + distance * direction
+
+        if tmp_arena._check_collision(new_start):
+            continue
+        if (obs_min_x <= new_start[0] <= obs_max_x and
+                obs_min_y <= new_start[1] <= obs_max_y):
+            continue
+
+        # Ensure the straight line from start to target crosses at least one
+        # obstacle. If not, reject this angle and try again.
+        n_points = max(100, int(distance / 0.1))
+        blocked = False
+        for t in np.linspace(0, 1, n_points):
+            pt = new_start + t * (target_arr - new_start)
+            if tmp_arena._check_collision(pt):
+                blocked = True
+                break
+        if not blocked:
+            continue
+
+        start = new_start.tolist()
+        break
 
     scenario = {
         "start": start,
@@ -230,6 +327,7 @@ def generate_grid_scenario(
         "dt": 0.05,
         "max_duration": 100.0,
         "target_tolerance": 1.0,
+        "start_zone": start_zone,
     }
     validate_scenario(scenario)
 

@@ -201,7 +201,7 @@ class Drone:
                 if abs(x - obs.x) / hw + abs(y - obs.y) / hh <= 1:
                     return True
             elif isinstance(obs, Star):
-                vertices = _star_vertices(obs.x, obs.y, 5, obs.radius * 1.5, obs.radius * 0.6)
+                vertices = _star_vertices(obs.x, obs.y, 5, obs.radius, obs.radius * 0.4)
                 if self._point_in_polygon(pos, vertices):
                     return True
             elif isinstance(obs, Cross):
@@ -221,7 +221,7 @@ class Drone:
                 if self._segment_vs_diamond(a, b, obs):
                     return True
             elif isinstance(obs, Star):
-                vertices = _star_vertices(obs.x, obs.y, 5, obs.radius * 1.5, obs.radius * 0.6)
+                vertices = _star_vertices(obs.x, obs.y, 5, obs.radius, obs.radius * 0.4)
                 if self._point_in_polygon(a, vertices) or self._point_in_polygon(b, vertices):
                     return True
                 nv = len(vertices)
