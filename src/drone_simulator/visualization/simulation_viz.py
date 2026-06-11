@@ -2,9 +2,9 @@
 
 import matplotlib.pyplot as plt
 import numpy as np
-from matplotlib.patches import Circle, Rectangle, Polygon
+from matplotlib.patches import Circle, Ellipse as EllipsePatch, Rectangle, Polygon
 
-from drone_simulator.core.obstacles import Circle as CircleObs, Rect, Diamond, Star, Cross
+from drone_simulator.core.obstacles import Circle as CircleObs, Rect, Diamond, Star, Cross, Ellipse, Poly
 
 
 def _draw_star(
@@ -28,7 +28,7 @@ def _draw_star(
 
 def draw_obstacle(
     ax: plt.Axes,
-    obs: CircleObs | Rect | Diamond | Star | Cross,
+    obs: CircleObs | Rect | Diamond | Star | Cross | Ellipse | Poly,
     color: str = "red",
     alpha: float = 0.3,
     fill: bool = True,
@@ -49,6 +49,14 @@ def draw_obstacle(
         w, h = obs.width, obs.height
         rect = Rectangle((x - w / 2, y - h / 2), w, h, color=color, alpha=alpha, fill=fill)
         ax.add_patch(rect)
+    elif isinstance(obs, Ellipse):
+        patch = EllipsePatch((x, y), 2 * obs.rx, 2 * obs.ry, color=color, alpha=alpha, fill=fill)
+        ax.add_patch(patch)
+    elif isinstance(obs, Poly):
+        from drone_simulator.core.obstacles import _regular_vertices
+        verts = _regular_vertices(x, y, obs.n, obs.radius)
+        polygon = Polygon([(v[0], v[1]) for v in verts], color=color, alpha=alpha, fill=fill)
+        ax.add_patch(polygon)
     else:
         r = obs.radius
         circle = Circle((x, y), r, color=color, alpha=alpha, fill=fill)

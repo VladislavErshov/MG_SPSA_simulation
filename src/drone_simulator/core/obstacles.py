@@ -51,7 +51,25 @@ class Cross:
     kind: Literal["cross"] = "cross"
 
 
-Obstacle = Circle | Rect | Diamond | Star | Cross
+@dataclass(frozen=True)
+class Ellipse:
+    x: float
+    y: float
+    rx: float
+    ry: float
+    kind: Literal["ellipse"] = "ellipse"
+
+
+@dataclass(frozen=True)
+class Poly:
+    x: float
+    y: float
+    radius: float
+    n: int
+    kind: Literal["poly"] = "poly"
+
+
+Obstacle = Circle | Rect | Diamond | Star | Cross | Ellipse | Poly
 
 
 def parse_obstacle(data: list) -> Obstacle:
@@ -77,6 +95,14 @@ def parse_obstacle(data: list) -> Obstacle:
         if len(data) < 5:
             raise ValueError(f"Cross obstacle requires [x, y, arm, t, 'cross'], got {data}")
         return Cross(float(data[0]), float(data[1]), float(data[2]), float(data[3]))
+    if kind == "ellipse":
+        if len(data) < 5:
+            raise ValueError(f"Ellipse obstacle requires [x, y, rx, ry, 'ellipse'], got {data}")
+        return Ellipse(float(data[0]), float(data[1]), float(data[2]), float(data[3]))
+    if kind == "poly":
+        if len(data) < 5:
+            raise ValueError(f"Poly obstacle requires [x, y, radius, n, 'poly'], got {data}")
+        return Poly(float(data[0]), float(data[1]), float(data[2]), int(data[3]))
 
     # default: circle
     if len(data) < 3:
@@ -84,10 +110,16 @@ def parse_obstacle(data: list) -> Obstacle:
     return Circle(float(data[0]), float(data[1]), float(data[2]))
 
 
-@staticmethod
 def _star_vertices(cx: float, cy: float, n: int, outer_r: float, inner_r: float) -> list[np.ndarray]:
     angles = np.linspace(0, 2 * np.pi, 2 * n, endpoint=False) - np.pi / 2
     radii = np.tile([outer_r, inner_r], n)
     xs = cx + radii * np.cos(angles)
     ys = cy + radii * np.sin(angles)
+    return [np.array([x, y]) for x, y in zip(xs, ys)]
+
+
+def _regular_vertices(cx: float, cy: float, n: int, radius: float) -> list[np.ndarray]:
+    angles = np.linspace(0, 2 * np.pi, n, endpoint=False) - np.pi / 2
+    xs = cx + radius * np.cos(angles)
+    ys = cy + radius * np.sin(angles)
     return [np.array([x, y]) for x, y in zip(xs, ys)]

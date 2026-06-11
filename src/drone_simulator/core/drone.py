@@ -12,7 +12,7 @@ from typing import Union
 
 import numpy as np
 
-from .obstacles import Obstacle, Circle, Rect, Diamond, Star, Cross, _star_vertices
+from .obstacles import Obstacle, Circle, Rect, Diamond, Star, Cross, Ellipse, Poly, _star_vertices, _regular_vertices
 
 
 class Drone:
@@ -209,6 +209,15 @@ class Drone:
                     return True
                 if abs(x - obs.x) <= obs.thickness / 2 and abs(y - obs.y) <= obs.arm:
                     return True
+            elif isinstance(obs, Ellipse):
+                dx = x - obs.x
+                dy = y - obs.y
+                if (dx / obs.rx) ** 2 + (dy / obs.ry) ** 2 < 1:
+                    return True
+            elif isinstance(obs, Poly):
+                vertices = _regular_vertices(obs.x, obs.y, obs.n, obs.radius)
+                if self._point_in_polygon(pos, vertices):
+                    return True
         return False
 
     def _check_segment_collision(self, a: np.ndarray, b: np.ndarray) -> bool:
@@ -233,6 +242,12 @@ class Drone:
                     return True
             elif isinstance(obs, Circle):
                 if self._segment_vs_circle(a, b, obs):
+                    return True
+            elif isinstance(obs, Ellipse):
+                if self._segment_vs_ellipse(a, b, obs):
+                    return True
+            elif isinstance(obs, Poly):
+                if self._segment_vs_poly(a, b, obs):
                     return True
         return False
 
@@ -302,6 +317,44 @@ class Drone:
         t = max(0.0, min(1.0, float(np.dot(c - a, ab)) / ab_len_sq))
         closest = a + t * ab
         return np.linalg.norm(closest - c) < r
+
+    def _segment_vs_ellipse(self, a: np.ndarray, b: np.ndarray, obs: Ellipse) -> bool:
+        # Fast reject via bounding box
+        min_x, max_x = min(a[0], b[0]), max(a[0], b[0])
+        min_y, max_y = min(a[1], b[1]), max(a[1], b[1])
+        if max_x < obs.x - obs.rx or min_x > obs.x + obs.rx:
+            return False
+        if max_y < obs.y - obs.ry or min_y > obs.y + obs.ry:
+            return False
+        # Check endpoints
+        for p in (a, b):
+            dx = float(p[0]) - obs.x
+            dy = float(p[1]) - obs.y
+            if (dx / obs.rx) ** 2 + (dy / obs.ry) ** 2 < 1:
+                return True
+        # Subdivide and sample midpoints (2 levels)
+        mids = [(a + b) / 2]
+        for _ in range(2):
+            next_mids = []
+            for m in mids:
+                dx = float(m[0]) - obs.x
+                dy = float(m[1]) - obs.y
+                if (dx / obs.rx) ** 2 + (dy / obs.ry) ** 2 < 1:
+                    return True
+                next_mids.append((a + m) / 2)
+                next_mids.append((m + b) / 2)
+            mids = next_mids
+        return False
+
+    def _segment_vs_poly(self, a: np.ndarray, b: np.ndarray, obs: Poly) -> bool:
+        vertices = _regular_vertices(obs.x, obs.y, obs.n, obs.radius)
+        if self._point_in_polygon(a, vertices) or self._point_in_polygon(b, vertices):
+            return True
+        nv = len(vertices)
+        for i in range(nv):
+            if self._segments_intersect(a, b, vertices[i], vertices[(i + 1) % nv]):
+                return True
+        return False
 
     @staticmethod
     def _point_in_polygon(pos: np.ndarray, vertices: list[np.ndarray]) -> bool:

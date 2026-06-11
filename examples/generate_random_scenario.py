@@ -16,7 +16,7 @@ import argparse
 from drone_simulator.scenario import generate_grid_scenario, generate_wall_scenario, save_scenario
 
 
-GRID_SHAPES = ["circle", "rect", "diamond", "star5", "cross", "crossed_rect"]
+GRID_SHAPES = ["circle", "rect", "diamond", "star5", "cross", "crossed_rect", "ellipse", "poly"]
 
 
 def generate_all_grids(seed: int) -> None:

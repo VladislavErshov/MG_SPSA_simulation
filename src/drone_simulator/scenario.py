@@ -165,12 +165,16 @@ def _build_grid_obstacle(
         return [cx, cy, size * 1.6, size * 1.6, "diamond"]
     if shape == "crossed_rect":
         return _build_crossed_rect_obstacle(cx, cy, size, is_horizontal)
+    if shape == "ellipse":
+        return [cx, cy, size * 0.8, size * 0.5, "ellipse"]
+    if shape == "poly":
+        return [cx, cy, size * 0.7, 6, "poly"]
     # default rect
     return [cx, cy, size * 1, size * 1, "rect"]
 
 
 def generate_grid_scenario(
-    shape: Literal["circle", "rect", "diamond", "star5", "cross", "crossed_rect"] = "circle",
+    shape: Literal["circle", "rect", "diamond", "star5", "cross", "crossed_rect", "ellipse", "poly"] = "circle",
     grid_n: int = 5,
     spacing: float = 5.0,
     obstacle_size: float = 2.0,
