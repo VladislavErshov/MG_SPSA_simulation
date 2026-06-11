@@ -51,8 +51,8 @@ class TestRandomizePositions:
 
         for _ in range(30):
             new_start, new_target = randomize_positions(arena, scenario, rng)
-            assert not arena._check_collision(new_start)
-            assert not arena._check_collision(new_target)
+            assert not arena.check_collision(new_start)
+            assert not arena.check_collision(new_target)
 
     def test_arena_positions_updated(self):
         """Given an arena, when randomizing, then arena.start_pos and arena.target_pos are updated."""

@@ -12,24 +12,25 @@ Usage:
 """
 
 import argparse
+from typing import Literal
 
 from drone_simulator.scenario import generate_grid_scenario, generate_wall_scenario, save_scenario
 
 
-GRID_SHAPES = ["circle", "rect", "diamond", "star5", "cross", "crossed_rect", "ellipse", "poly"]
+GRID_SHAPES: list[Literal["circle", "rect", "diamond", "star5", "cross", "crossed_rect", "ellipse", "poly"]] = [
+    "circle", "rect", "diamond", "star5", "cross", "crossed_rect", "ellipse", "poly"
+]
 
 
 def generate_all_grids(seed: int) -> None:
     """Generate one scenario for each supported grid shape."""
-    sides = ["left", "right", "top", "bottom"]
     for i, shape in enumerate(GRID_SHAPES):
         out_path = f"configs/simulation/grid_{shape}_random.json"
         scenario = generate_grid_scenario(
-            shape=shape,  # type: ignore[arg-type]
-            grid_n=5,
+            shape=shape,
+            grid_n=6,
             spacing=5.0,
             obstacle_size=2.0,
-            start_side=sides[i % len(sides)],  # type: ignore[arg-type]
             seed=seed + i,
         )
         save_scenario(scenario, out_path)
@@ -68,8 +69,7 @@ def main():
         scenario = generate_wall_scenario(seed=args.seed)
     else:
         scenario = generate_grid_scenario(
-            shape=args.shape,  # type: ignore[arg-type]
-            start_side="random",
+            shape=args.shape,
             seed=args.seed,
         )
     save_scenario(scenario, args.out)

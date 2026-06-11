@@ -3,6 +3,7 @@
 import numpy as np
 import pytest
 
+from drone_simulator.core.drone import ManeuverParams
 from drone_simulator.optimizers.spsa import (
     ManeuverOptimizer,
     ManeuverOptimizerConfig,
@@ -24,9 +25,9 @@ def test_optimizer_initialization():
     cfg = ManeuverOptimizerConfig()
     opt = ManeuverOptimizer(cfg)
     params = opt.get_params()
-    assert params["d_back"] == pytest.approx(cfg.d_back_init)
-    assert params["omega_turn"] == pytest.approx(cfg.omega_turn_init)
-    assert params["alpha_evade"] == pytest.approx(cfg.alpha_evade_init)
+    assert params.d_back == pytest.approx(cfg.d_back_init)
+    assert params.omega_turn == pytest.approx(cfg.omega_turn_init)
+    assert params.alpha_evade == pytest.approx(cfg.alpha_evade_init)
     assert opt.iteration == 0
 
 
@@ -41,27 +42,27 @@ def test_parameter_clipping_after_evaluate():
     )
     opt = ManeuverOptimizer(cfg)
 
-    def dummy_loss(params):
-        return params["d_back"] ** 2 + params["omega_turn"] ** 2 + params["alpha_evade"] ** 2
+    def dummy_loss(params: ManeuverParams) -> float:
+        return params.d_back ** 2 + params.omega_turn ** 2 + params.alpha_evade ** 2
 
     np.random.seed(0)
     for _ in range(20):
         opt.evaluate("spsa2", dummy_loss)
 
     params = opt.get_params()
-    assert cfg.d_back_min <= params["d_back"] <= cfg.d_back_max
-    assert cfg.omega_turn_min <= params["omega_turn"] <= cfg.omega_turn_max
-    assert cfg.alpha_evade_min <= params["alpha_evade"] <= cfg.alpha_evade_max
+    assert cfg.d_back_min <= params.d_back <= cfg.d_back_max
+    assert cfg.omega_turn_min <= params.omega_turn <= cfg.omega_turn_max
+    assert cfg.alpha_evade_min <= params.alpha_evade <= cfg.alpha_evade_max
 
 
 def test_evaluate_spsa1():
     cfg = ManeuverOptimizerConfig(a=1.0, c=0.1, burn_in=0)
     opt = ManeuverOptimizer(cfg)
 
-    def dummy_loss(params):
-        d = params["d_back"]
-        w = params["omega_turn"]
-        a = params["alpha_evade"]
+    def dummy_loss(params: ManeuverParams) -> float:
+        d = params.d_back
+        w = params.omega_turn
+        a = params.alpha_evade
         return d ** 2 + w ** 2 + a ** 2
 
     np.random.seed(0)
@@ -75,10 +76,10 @@ def test_evaluate_spsa2():
     cfg = ManeuverOptimizerConfig(a=1.0, c=0.1, burn_in=0)
     opt = ManeuverOptimizer(cfg)
 
-    def dummy_loss(params):
-        d = params["d_back"]
-        w = params["omega_turn"]
-        a = params["alpha_evade"]
+    def dummy_loss(params: ManeuverParams) -> float:
+        d = params.d_back
+        w = params.omega_turn
+        a = params.alpha_evade
         return d ** 2 + w ** 2 + a ** 2
 
     np.random.seed(0)
@@ -116,11 +117,11 @@ def test_perturbation_size_theory():
     assert beta2 == pytest.approx(0.5 / (16 ** (1.0 / 6.0)))
 
 
-def test_to_dict_and_perturb():
+def test_to_params_and_perturb():
     cfg = ManeuverOptimizerConfig()
     opt = ManeuverOptimizer(cfg)
     t = opt._perturb_theta(0, 0.5)
-    d = opt._to_dict(t)
-    assert d["d_back"] == pytest.approx(cfg.d_back_init + 0.5)
-    assert d["omega_turn"] == pytest.approx(cfg.omega_turn_init)
-    assert d["alpha_evade"] == pytest.approx(cfg.alpha_evade_init)
+    params = opt._theta_to_params(t)
+    assert params.d_back == pytest.approx(cfg.d_back_init + 0.5)
+    assert params.omega_turn == pytest.approx(cfg.omega_turn_init)
+    assert params.alpha_evade == pytest.approx(cfg.alpha_evade_init)

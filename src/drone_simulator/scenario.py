@@ -20,7 +20,7 @@ OPTIONAL_SCENARIO_DEFAULTS = {
 }
 
 
-def load_scenario(config_path: str | Path) -> dict:
+def load_scenario(config_path: str | Path) -> dict[str, Any]:
     """Load and validate a scenario JSON file."""
     path = Path(config_path)
     if not path.is_absolute():
@@ -52,7 +52,7 @@ def validate_scenario(scenario: dict[str, Any]) -> None:
         scenario.setdefault(key, default)
 
 
-def create_arena(scenario: dict) -> Drone:
+def create_arena(scenario: dict[str, Any]) -> Drone:
     """Create a Drone arena from a validated scenario dict."""
     obstacles = [parse_obstacle(o) for o in scenario["obstacles"]]
     return Drone(
@@ -67,7 +67,7 @@ def create_arena(scenario: dict) -> Drone:
 
 def randomize_positions(
     arena: Drone,
-    scenario: dict,
+    scenario: dict[str, Any],
     rng: np.random.Generator,
     max_attempts: int = 200,
 ) -> tuple[np.ndarray, np.ndarray]:
@@ -83,12 +83,12 @@ def randomize_positions(
         for _ in range(max_attempts):
             distance = rng.uniform(r_min, r_max)
             angle = rng.uniform(0, 2 * np.pi)
-            new_start = center + distance * np.array([np.cos(angle), np.sin(angle)])
-            if arena._check_collision(new_start):
+            new_target = center + distance * np.array([np.cos(angle), np.sin(angle)])
+            if arena.check_collision(new_target):
                 continue
-            arena.start_pos = new_start
-            arena.target_pos = center
-            return new_start, center
+            arena.start_pos = center
+            arena.target_pos = new_target
+            return center, new_target
         arena.start_pos = start_orig
         arena.target_pos = target_orig
         return start_orig, target_orig
@@ -119,7 +119,7 @@ def randomize_positions(
         new_start = new_mid - (distance / 2) * direction
         new_target = new_mid + (distance / 2) * direction
 
-        if arena._check_collision(new_start) or arena._check_collision(new_target):
+        if arena.check_collision(new_start) or arena.check_collision(new_target):
             continue
 
         # Reject if the start landed inside the obstacle bounding box.
@@ -175,31 +175,28 @@ def _build_grid_obstacle(
 
 def generate_grid_scenario(
     shape: Literal["circle", "rect", "diamond", "star5", "cross", "crossed_rect", "ellipse", "poly"] = "circle",
-    grid_n: int = 5,
+    grid_n: int = 6,
     spacing: float = 5.0,
     obstacle_size: float = 2.0,
-    start_side: Literal["left", "right", "top", "bottom", "random"] = "left",
     seed: int = 0,
-) -> dict:
+) -> dict[str, Any]:
     """Generate a scenario with a dense n×n obstacle grid.
 
-    The grid size n must be odd. The target is placed in the centre cell
-    and the central obstacle is removed. The start is placed outside the
-    grid so that the straight line to the target passes through a row or
-    column of obstacles.
+    The grid size n should be even.  The start is placed at the geometric
+    centre of the grid (between the central obstacles).  The target is
+    placed outside the grid so that the straight line to it passes through
+    a row or column of obstacles.
 
     Parameters
     ----------
     shape : str
         Obstacle shape type.
     grid_n : int
-        Number of obstacles along each axis (must be odd).
+        Number of obstacles along each axis (even by convention).
     spacing : float
         Distance between obstacle centres.
     obstacle_size : float
         Size parameter (radius / arm / half-width).
-    start_side : str
-        Which side of the grid the start is on ("random" picks one).
     seed : int
         Random seed.
 
@@ -208,59 +205,36 @@ def generate_grid_scenario(
     dict
         Validated scenario dictionary.
     """
-    if grid_n % 2 == 0:
-        raise ValueError("grid_n must be odd so the grid has a unique centre cell")
-
     rng = np.random.default_rng(seed)
-
-    if start_side == "random":
-        start_side = rng.choice(["left", "right", "top", "bottom"]).item()  # type: ignore[assignment]
 
     grid_width = (grid_n - 1) * spacing
     grid_height = grid_width
     margin = spacing * 1.5
 
-    arena_width = grid_width + 2 * margin
-    arena_height = grid_height + 2 * margin
-
     # Grid top-left corner
     grid_x0 = margin
     grid_y0 = margin
 
-    # Place target in the centre cell and remove that obstacle.
-    mid_i = grid_n // 2
-    target_x = grid_x0 + mid_i * spacing
-    target_y = grid_y0 + mid_i * spacing
-    target = [target_x, target_y]
-
-    # Base start (used for distance and span calculations only).
-    if start_side == "left":
-        base_start = [margin * 0.3, target_y]
-    elif start_side == "right":
-        base_start = [arena_width - margin * 0.3, target_y]
-    elif start_side == "top":
-        base_start = [target_x, arena_height - margin * 0.3]
-    else:  # bottom
-        base_start = [target_x, margin * 0.3]
+    # Start at the geometric centre of the grid.
+    start_x = grid_x0 + (grid_n - 1) * spacing / 2
+    start_y = grid_y0 + (grid_n - 1) * spacing / 2
+    start = [start_x, start_y]
 
     obstacles = []
     for iy in range(grid_n):
         for ix in range(grid_n):
-            if ix == mid_i and iy == mid_i:
-                continue  # centre cell is the target
             cx = grid_x0 + ix * spacing
             cy = grid_y0 + iy * spacing
             is_horizontal = (ix + iy) % 2 == 0
             obstacles.append(_build_grid_obstacle(shape, cx, cy, obstacle_size, is_horizontal))
 
-    # Randomise start position inside a ring strictly around the obstacle grid.
-    base_start_arr = np.array(base_start, dtype=float)
-    target_arr = np.array(target, dtype=float)
+    # Randomise target position outside the obstacle grid.
+    start_arr = np.array(start, dtype=float)
 
     obs_xs = [o[0] for o in obstacles]
     obs_ys = [o[1] for o in obstacles]
-    all_x = obs_xs + [base_start_arr[0], target_arr[0]]
-    all_y = obs_ys + [base_start_arr[1], target_arr[1]]
+    all_x = obs_xs + [start_arr[0]]
+    all_y = obs_ys + [start_arr[1]]
     span_x = max(all_x) - min(all_x)
     span_y = max(all_y) - min(all_y)
     pad = max(span_x, span_y) * 0.05
@@ -268,24 +242,24 @@ def generate_grid_scenario(
     obs_min_y, obs_max_y = min(obs_ys) - pad, max(obs_ys) + pad
 
     r_min = max(
-        abs(target_x - obs_min_x),
-        abs(target_x - obs_max_x),
-        abs(target_y - obs_min_y),
-        abs(target_y - obs_max_y),
+        abs(start_x - obs_min_x),
+        abs(start_x - obs_max_x),
+        abs(start_y - obs_min_y),
+        abs(start_y - obs_max_y),
     )
-    start_zone_width = 2.0
-    r_max = r_min + start_zone_width
+    target_zone_width = 2.0
+    r_max = r_min + target_zone_width
 
     start_zone = {
-        "cx": float(target_x),
-        "cy": float(target_y),
+        "cx": float(start_x),
+        "cy": float(start_y),
         "r_min": float(r_min),
         "r_max": float(r_max),
     }
 
     tmp_scenario = {
-        "start": base_start,
-        "target": target,
+        "start": start,
+        "target": start,
         "obstacles": obstacles,
         "speed": 5.0,
         "dt": 0.05,
@@ -295,17 +269,17 @@ def generate_grid_scenario(
     validate_scenario(tmp_scenario)
     tmp_arena = create_arena(tmp_scenario)
 
-    start = base_start
+    target = start
     for _ in range(200):
         distance = rng.uniform(r_min, r_max)
         angle = rng.uniform(0, 2 * np.pi)
         direction = np.array([np.cos(angle), np.sin(angle)])
-        new_start = target_arr + distance * direction
+        new_target = start_arr + distance * direction
 
-        if tmp_arena._check_collision(new_start):
+        if tmp_arena.check_collision(new_target):
             continue
-        if (obs_min_x <= new_start[0] <= obs_max_x and
-                obs_min_y <= new_start[1] <= obs_max_y):
+        if (obs_min_x <= new_target[0] <= obs_max_x and
+                obs_min_y <= new_target[1] <= obs_max_y):
             continue
 
         # Ensure the straight line from start to target crosses at least one
@@ -313,14 +287,14 @@ def generate_grid_scenario(
         n_points = max(100, int(distance / 0.1))
         blocked = False
         for t in np.linspace(0, 1, n_points):
-            pt = new_start + t * (target_arr - new_start)
-            if tmp_arena._check_collision(pt):
+            pt = start_arr + t * (new_target - start_arr)
+            if tmp_arena.check_collision(pt):
                 blocked = True
                 break
         if not blocked:
             continue
 
-        start = new_start.tolist()
+        target = new_target.tolist()
         break
 
     scenario = {
@@ -339,7 +313,7 @@ def generate_grid_scenario(
     tmp_arena = create_arena(scenario)
     nudge_vec = np.array(start) - np.array(target)
     nudge_vec = nudge_vec / (np.linalg.norm(nudge_vec) + 1e-12)
-    while tmp_arena._check_collision(np.array(target)):
+    while tmp_arena.check_collision(np.array(target)):
         target[0] += nudge_vec[0] * 0.3
         target[1] += nudge_vec[1] * 0.3
         scenario["target"] = target
@@ -355,7 +329,7 @@ def generate_wall_scenario(
     wall_thickness: float = 1.5,
     gap_size: float = 3.0,
     seed: int = 0,
-) -> dict:
+) -> dict[str, Any]:
     """Generate a scenario with perpendicular walls that force maneuvers.
 
     The start is at the left edge, target at the right edge.
@@ -414,7 +388,7 @@ def generate_wall_scenario(
     return scenario
 
 
-def save_scenario(scenario: dict, path: str | Path) -> None:
+def save_scenario(scenario: dict[str, Any], path: str | Path) -> None:
     """Save a scenario dictionary to a JSON file."""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)

@@ -9,9 +9,11 @@ theta = [d_back, omega_turn, alpha_evade]
 
 import logging
 from dataclasses import dataclass
-from typing import Callable, Dict
+from typing import Any, Callable
 
 import numpy as np
+
+from drone_simulator.core.drone import ManeuverParams
 
 logger = logging.getLogger(__name__)
 
@@ -65,20 +67,19 @@ class ManeuverOptimizer:
         )
         self.velocity = np.zeros(3)
         self.iteration = 0
-        self.history: list[dict] = []
+        self.history: list[dict[str, Any]] = []
 
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
-    def evaluate(self, mode: str, run_fn: Callable[[Dict], float]) -> np.ndarray:
+    def evaluate(self, mode: str, run_fn: Callable[[ManeuverParams], float]) -> np.ndarray:
         """
         Compute gradient and update theta.
 
         Parameters
         ----------
         mode : 'spsa1' | 'spsa2'
-        run_fn : callable(theta_dict) -> loss_float
-            Must accept a dict with keys 'd_back', 'omega_turn', 'alpha_evade'.
+        run_fn : callable(ManeuverParams) -> loss_float
 
         Returns
         -------
@@ -103,16 +104,16 @@ class ManeuverOptimizer:
 
             if mode == "spsa1":
                 loss_pert = run_fn(
-                    self._to_dict(self._perturb_theta(2, beta_n * delta))
+                    self._theta_to_params(self._perturb_theta(2, beta_n * delta))
                 )
-                loss_base = run_fn(self._to_dict(self.theta))
+                loss_base = run_fn(self.to_params())
                 grad_2 += delta * (loss_pert - loss_base) / beta_n
             elif mode == "spsa2":
                 loss_plus = run_fn(
-                    self._to_dict(self._perturb_theta(2, beta_n * delta))
+                    self._theta_to_params(self._perturb_theta(2, beta_n * delta))
                 )
                 loss_minus = run_fn(
-                    self._to_dict(self._perturb_theta(2, -beta_n * delta))
+                    self._theta_to_params(self._perturb_theta(2, -beta_n * delta))
                 )
                 grad_2 += delta * (loss_plus - loss_minus) / (2.0 * beta_n)
             else:
@@ -138,17 +139,27 @@ class ManeuverOptimizer:
                 "theta": self.theta.copy(),
                 "grad": grad.copy(),
                 "velocity": self.velocity.copy(),
-                "loss": run_fn(self._to_dict(self.theta)),
+                "loss": run_fn(self.to_params()),
             }
         )
 
         return grad
 
-    def get_params(self, use_best: bool = False) -> Dict:
+    def get_params(self, use_best: bool = False) -> ManeuverParams:
         if not use_best or not self.history:
-            return self._to_dict(self.theta)
+            return self.to_params()
         best = min(self.history, key=lambda h: h["loss"])
-        return self._to_dict(best["theta"])
+        return self._theta_to_params(best["theta"])
+
+    def to_params(self) -> ManeuverParams:
+        return self._theta_to_params(self.theta)
+
+    def to_dict(self) -> dict[str, float]:
+        return {
+            "d_back": float(self.theta[0]),
+            "omega_turn": float(self.theta[1]),
+            "alpha_evade": float(self.theta[2]),
+        }
 
     # ------------------------------------------------------------------
     # Helpers
@@ -170,21 +181,22 @@ class ManeuverOptimizer:
         t[coord] += delta
         return t
 
+    @staticmethod
+    def _theta_to_params(theta: np.ndarray) -> ManeuverParams:
+        return ManeuverParams(
+            d_back=float(theta[0]),
+            omega_turn=float(theta[1]),
+            alpha_evade=float(theta[2]),
+        )
+
     def _central_fd(
-        self, run_fn: Callable[[Dict], float], eps: float, coord: int
+        self, run_fn: Callable[[ManeuverParams], float], eps: float, coord: int
     ) -> float:
-        loss_plus = run_fn(self._to_dict(self._perturb_theta(coord, eps)))
-        loss_minus = run_fn(self._to_dict(self._perturb_theta(coord, -eps)))
+        loss_plus = run_fn(self._theta_to_params(self._perturb_theta(coord, eps)))
+        loss_minus = run_fn(self._theta_to_params(self._perturb_theta(coord, -eps)))
         return (loss_plus - loss_minus) / (2.0 * eps)
 
-    def _to_dict(self, theta: np.ndarray) -> Dict:
-        return {
-            "d_back": float(theta[0]),
-            "omega_turn": float(theta[1]),
-            "alpha_evade": float(theta[2]),
-        }
-
-    def _clip(self):
+    def _clip(self) -> None:
         cfg = self.config
         self.theta[0] = np.clip(self.theta[0], cfg.d_back_min, cfg.d_back_max)
         self.theta[1] = np.clip(
