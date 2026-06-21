@@ -4,6 +4,7 @@ Usage:
     python examples/run_and_plot.py --mode spsa2 --iterations 30
     python examples/run_and_plot.py --mode spsa1 --iterations 30 --seed 42
     python examples/run_and_plot.py --config configs/simulation/corridor_3.json --mode spsa2 --iterations 30
+    python examples/run_and_plot.py --mode spsa2 --iterations 30 --runs 10
 """
 
 import argparse
@@ -152,6 +153,10 @@ def main():
         "--n-eval", type=int, default=5,
         help="Number of random position samples to average loss over (default: 5)"
     )
+    parser.add_argument(
+        "--runs", type=int, default=1,
+        help="Number of independent training runs to average over (default: 1)"
+    )
     args = parser.parse_args()
 
     if args.no_display:
@@ -159,13 +164,25 @@ def main():
 
     scenario = load_scenario(args.config)
     print(f"Config: {args.config}")
-    print(f"Mode: {args.mode}, Iterations: {args.iterations}, Seed: {args.seed}")
+    print(f"Mode: {args.mode}, Iterations: {args.iterations}, Seed: {args.seed}, Runs: {args.runs}")
 
-    optimizer, losses, times, trajectories, traj_meta = train(
-        args.mode, scenario, args.iterations, args.seed, n_eval_samples=args.n_eval
-    )
+    all_losses: list[list[float]] = []
+    all_times: list[list[float]] = []
 
-    # Final runs on original config positions
+    for r in range(args.runs):
+        current_seed = args.seed + r
+        print(f"\n--- Run {r + 1}/{args.runs} (seed={current_seed}) ---")
+        optimizer, losses, times, trajectories, traj_meta = train(
+            args.mode, scenario, args.iterations, current_seed, n_eval_samples=args.n_eval
+        )
+        all_losses.append(losses)
+        all_times.append(times)
+
+    # Average curves over runs
+    avg_losses = np.mean(all_losses, axis=0).tolist()
+    avg_times = np.mean(all_times, axis=0).tolist()
+
+    # Final runs on original config positions (use last run's optimizer)
     baseline_cfg = ManeuverOptimizerConfig()
     baseline_params = ManeuverParams(
         d_back=baseline_cfg.d_back_init,
@@ -187,7 +204,7 @@ def main():
     )
 
     plot_results(
-        optimizer, losses, times, trajectories, traj_meta,
+        optimizer, avg_losses, avg_times, trajectories, traj_meta,
         args.mode, scenario, final_result, baseline_result, args.config,
         show_plot=not args.no_display,
     )

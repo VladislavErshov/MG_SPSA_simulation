@@ -42,6 +42,9 @@ python examples/generate_random_scenario.py --type grid --shape star5 --out conf
 python examples/run_and_plot.py --config configs/simulation/default.json --mode spsa2 --iterations 30
 python examples/run_and_plot.py --mode spsa1 --iterations 30 --seed 42
 python examples/run_and_plot.py --config configs/simulation/corridor_3.json --mode spsa2 --iterations 30
+
+# Average over 5 independent runs for smoother curves
+python examples/run_and_plot.py --config configs/simulation/grid_star5_random.json --mode spsa2 --iterations 60 --runs 5 --no-display
 ```
 
 ### Train on all existing configs in `configs/simulation/`
@@ -75,6 +78,9 @@ Saves results to `results/maneuver_learning_<config_name>.png`.
 | `--seed` | `0` | Random seed |
 | `--no-display` | `False` | Save plot without showing window |
 | `--n-eval` | `5` | Number of random position samples to average loss over |
+| `--runs` | `1` | Number of independent training runs to average on the plot |
+
+Use `--runs N` to smooth learning curves by averaging loss and time over multiple independent seeds:
 
 ## Scenario Configuration
 

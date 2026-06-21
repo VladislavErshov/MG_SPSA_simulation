@@ -1,6 +1,7 @@
 # Projects
 results
-.claude
+.claude/memory
+**.json
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
