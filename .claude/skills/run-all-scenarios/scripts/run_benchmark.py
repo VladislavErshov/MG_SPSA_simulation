@@ -19,7 +19,7 @@ DEFAULT_ITERATIONS = 60
 DEFAULT_WORKERS = max(1, os.cpu_count() - 1)
 DEFAULT_RETRIES = 3
 DEFAULT_RUNS = 5
-TIMEOUT = 4500
+TIMEOUT = 259200  # 3 days
 
 
 def run_config(config_name: str, seed: int = 0, iterations: int = DEFAULT_ITERATIONS, runs: int = DEFAULT_RUNS) -> dict:
@@ -130,9 +130,18 @@ def main():
         default=DEFAULT_RUNS,
         help=f"Number of independent training runs per scenario (default: {DEFAULT_RUNS})",
     )
+    parser.add_argument(
+        "--configs",
+        nargs="+",
+        default=None,
+        help="Specific config filenames to run (default: all *.json in configs/simulation)",
+    )
     args = parser.parse_args()
 
-    configs = sorted([p.name for p in CONFIG_DIR.glob("*.json")])
+    if args.configs:
+        configs = sorted(args.configs)
+    else:
+        configs = sorted([p.name for p in CONFIG_DIR.glob("*.json")])
     print(
         f"Found {len(configs)} configs, workers={args.workers}, iterations={args.iterations}, runs={args.runs}"
     )
